@@ -1,109 +1,109 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
   <title>M-Talk</title>
   <link rel="stylesheet" href="/style.css">
 </head>
-
 <body>
 
 <div id="auth" class="auth">
   <div class="auth-card">
+    <div class="logo">M</div>
+    <h1>M-Talk</h1>
 
-    <div class="logo">M-Talk</div>
-    <div class="subtitle">Интернет-мессенджер</div>
+    <div id="registerBox">
+      <input id="regName" placeholder="Ваше имя">
+      <input id="regUser" placeholder="Ник (например maxim)">
+      <input id="regPass" type="password" placeholder="Пароль">
+      <button id="registerBtn">Создать аккаунт</button>
+      <p>Уже есть аккаунт?
+        <button class="link" id="showLogin">Войти</button>
+      </p>
+    </div>
 
-    <input id="username" placeholder="Логин">
-    <input id="password" type="password" placeholder="Пароль">
+    <div id="loginBox" hidden>
+      <input id="loginUser" placeholder="Ник">
+      <input id="loginPass" type="password" placeholder="Пароль">
+      <button id="loginBtn">Войти</button>
+      <p>Нет аккаунта?
+        <button class="link" id="showRegister">Регистрация</button>
+      </p>
+    </div>
 
-    <div id="authError" class="error"></div>
-
-    <button id="loginBtn" class="primary">
-      Войти
-    </button>
-
-    <button id="registerBtn" class="secondary">
-      Создать аккаунт
-    </button>
-
+    <div id="authError"></div>
   </div>
 </div>
 
-<div id="app" class="app hidden">
+<div id="app" class="app" hidden>
 
-  <aside class="sidebar">
+  <header class="topbar">
+    <button id="backBtn" class="icon" hidden>‹</button>
 
-    <div class="top">
-
-      <div class="top-row">
-
-        <div>
-          <div class="brand">M-Talk</div>
-          <div id="currentUser" class="user-name"></div>
-        </div>
-
-        <button id="logoutBtn" class="logout">
-          Выйти
-        </button>
-
-      </div>
-
+    <div class="titleBlock">
+      <b id="topTitle">M-Talk</b>
+      <span id="topStatus">мессенджер</span>
     </div>
 
-    <div class="search">
-      <input
-        id="search"
-        placeholder="Поиск пользователей..."
-      >
-    </div>
+    <button id="searchBtn" class="icon">⌕</button>
+    <button id="settingsBtn" class="icon">⚙</button>
+  </header>
 
-    <div id="results" class="results"></div>
+  <section id="searchPanel" class="searchPanel" hidden>
+    <input id="searchInput" placeholder="Найти человека по имени или нику">
+    <div id="searchResults"></div>
+  </section>
 
-    <div id="chats" class="chats"></div>
+  <main id="chatList" class="chatList"></main>
 
-  </aside>
+  <section id="chat" class="chat" hidden>
+    <div id="messages" class="messages"></div>
 
-  <main class="chat">
-
-    <div class="chat-header">
-
-      <button id="backBtn" class="back">
-        ‹
-      </button>
-
-      <div id="chatTitle">
-        Выберите чат
+    <div id="replyBox" class="replyBox" hidden>
+      <div>
+        <b id="replyName"></b>
+        <span id="replyText"></span>
       </div>
-
-    </div>
-
-    <div id="messages" class="messages">
-
-      <div class="empty">
-        Выберите пользователя или создайте чат
-      </div>
-
+      <button id="cancelReply">×</button>
     </div>
 
     <div class="composer">
+      <input id="messageInput" autocomplete="off" placeholder="Сообщение">
+      <button id="sendBtn">➤</button>
+    </div>
+  </section>
 
-      <input
-        id="messageInput"
-        class="message-input"
-        placeholder="Сообщение..."
-        autocomplete="off"
-      >
+</div>
 
-      <button id="sendBtn" class="send">
-        ➤
-      </button>
+<div id="settings" class="modal" hidden>
+  <div class="modal-card">
+    <button id="closeSettings" class="close">×</button>
 
+    <h2>Настройки</h2>
+
+    <div class="profile">
+      <div id="profileAvatar" class="avatar big">M</div>
+      <div>
+        <b id="profileName"></b>
+        <span id="profileUsername"></span>
+      </div>
     </div>
 
-  </main>
+    <label>Имя</label>
+    <input id="newName" placeholder="Ваше имя">
+    <button id="saveName">Сохранить имя</button>
 
+    <h3>Тема</h3>
+
+    <div class="themeButtons">
+      <button data-theme="dark">🌙 Тёмная</button>
+      <button data-theme="light">☀ Светлая</button>
+      <button data-theme="blue">🔵 Синяя</button>
+    </div>
+
+    <button id="logout" class="danger">Выйти из аккаунта</button>
+  </div>
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
