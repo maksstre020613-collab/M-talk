@@ -8,6 +8,7 @@ const { Pool } = require("pg");
 const { Server } = require("socket.io");
 
 const app = express();
+
 app.set("trust proxy", 1);
 
 const server = http.createServer(app);
@@ -24,36 +25,88 @@ if (!JWT_SECRET || !DATABASE_URL) {
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
+
+/* =========================
+   SECURITY
+========================= */
 
 app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
-        styleSrc: ["'self'"],
-        connectSrc: ["'self'", "ws:", "wss:"],
-        imgSrc: ["'self'", "data:"],
-        objectSrc: ["'none'"],
-        baseUri: ["'self'"],
-        frameAncestors: ["'none'"]
+
+        scriptSrc: [
+          "'self'",
+          "'unsafe-inline'"
+        ],
+
+        styleSrc: [
+          "'self'",
+          "'unsafe-inline'"
+        ],
+
+        connectSrc: [
+          "'self'",
+          "ws:",
+          "wss:"
+        ],
+
+        imgSrc: [
+          "'self'",
+          "data:",
+          "blob:"
+        ],
+
+        mediaSrc: [
+          "'self'",
+          "data:",
+          "blob:"
+        ],
+
+        objectSrc: [
+          "'none'"
+        ],
+
+        baseUri: [
+          "'self'"
+        ],
+
+        frameAncestors: [
+          "'none'"
+        ]
       }
     }
   })
 );
 
-app.use(express.json({ limit: "32kb" }));
-app.use(express.static("public"));
+app.use(
+  express.json({
+    limit: "32kb"
+  })
+);
+
+app.use(
+  express.static("public")
+);
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 30
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false
 });
 
 app.use("/api/register", limiter);
 app.use("/api/login", limiter);
+
+/* =========================
+   DATABASE
+========================= */
 
 async function db(sql, params = []) {
   return pool.query(sql, params);
@@ -90,20 +143,38 @@ async function initDB() {
 
   await db(`
     CREATE TABLE IF NOT EXISTS chat_members (
-      chat_id INTEGER REFERENCES chats(id) ON DELETE CASCADE,
-      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-      PRIMARY KEY(chat_id,user_id)
+      chat_id INTEGER
+        REFERENCES chats(id)
+        ON DELETE CASCADE,
+
+      user_id INTEGER
+        REFERENCES users(id)
+        ON DELETE CASCADE,
+
+      PRIMARY KEY(chat_id, user_id)
     )
   `);
 
   await db(`
     CREATE TABLE IF NOT EXISTS messages (
       id BIGSERIAL PRIMARY KEY,
-      chat_id INTEGER REFERENCES chats(id) ON DELETE CASCADE,
-      sender_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+
+      chat_id INTEGER
+        REFERENCES chats(id)
+        ON DELETE CASCADE,
+
+      sender_id INTEGER
+        REFERENCES users(id)
+        ON DELETE CASCADE,
+
       text TEXT NOT NULL,
-      reply_to_id BIGINT REFERENCES messages(id) ON DELETE SET NULL,
+
+      reply_to_id BIGINT
+        REFERENCES messages(id)
+        ON DELETE SET NULL,
+
       read_at TIMESTAMPTZ,
+
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
@@ -120,7 +191,7 @@ async function initDB() {
 
   await db(`
     CREATE INDEX IF NOT EXISTS messages_chat_idx
-    ON messages(chat_id,id)
+    ON messages(chat_id, id)
   `);
 
   await db(`
@@ -131,6 +202,43 @@ async function initDB() {
   console.log("PostgreSQL database ready");
 }
 
+/* =========================
+   HELPERS
+========================= */
+
+function avatarLetter(name, username) {
+  const value = String(
+    name ||
+    username ||
+    "?"
+  ).trim();
+
+  if (!value) {
+    return "?";
+  }
+
+  return value
+    .charAt(0)
+    .toUpperCase();
+}
+
+function makeUser(user) {
+  const displayName =
+    user.display_name ||
+    user.username;
+
+  return {
+    id: user.id,
+    username: user.username,
+    display_name: displayName,
+    avatar: avatarLetter(
+      displayName,
+      user.username
+    ),
+    last_seen: user.last_seen || null
+  };
+}
+
 function makeToken(user) {
   return jwt.sign(
     {
@@ -138,12 +246,15 @@ function makeToken(user) {
       username: user.username
     },
     JWT_SECRET,
-    { expiresIn: "7d" }
+    {
+      expiresIn: "7d"
+    }
   );
 }
 
 function auth(req, res, next) {
-  const h = req.headers.authorization || "";
+  const h =
+    req.headers.authorization || "";
 
   if (!h.startsWith("Bearer ")) {
     return res.status(401).json({
@@ -159,7 +270,7 @@ function auth(req, res, next) {
 
     next();
   } catch {
-    res.status(401).json({
+    return res.status(401).json({
       error: "Недействительный токен"
     });
   }
@@ -170,22 +281,35 @@ async function isMember(chatId, userId) {
     `
     SELECT 1
     FROM chat_members
-    WHERE chat_id=$1 AND user_id=$2
+    WHERE chat_id=$1
+      AND user_id=$2
     `,
-    [chatId, userId]
+    [
+      chatId,
+      userId
+    ]
   );
 
   return r.rowCount > 0;
 }
 
+/* =========================
+   ONLINE
+========================= */
+
 const online = new Map();
 
 function setOnline(userId, socketId) {
   if (!online.has(userId)) {
-    online.set(userId, new Set());
+    online.set(
+      userId,
+      new Set()
+    );
   }
 
-  online.get(userId).add(socketId);
+  online
+    .get(userId)
+    .add(socketId);
 
   io.emit("userStatus", {
     userId,
@@ -193,725 +317,1247 @@ function setOnline(userId, socketId) {
   });
 }
 
-async function setOffline(userId, socketId) {
-  const sockets = online.get(userId);
+async function setOffline(
+  userId,
+  socketId
+) {
+  const sockets =
+    online.get(userId);
 
-  if (sockets) {
-    sockets.delete(socketId);
+  if (!sockets) {
+    return;
+  }
 
-    if (sockets.size === 0) {
-      online.delete(userId);
+  sockets.delete(socketId);
 
-      await db(
-        "UPDATE users SET last_seen=NOW() WHERE id=$1",
-        [userId]
-      );
+  if (sockets.size === 0) {
+    online.delete(userId);
 
-      io.emit("userStatus", {
-        userId,
-        online: false,
-        lastSeen: new Date().toISOString()
-      });
-    }
+    const now =
+      new Date().toISOString();
+
+    await db(
+      `
+      UPDATE users
+      SET last_seen=NOW()
+      WHERE id=$1
+      `,
+      [userId]
+    );
+
+    io.emit("userStatus", {
+      userId,
+      online: false,
+      lastSeen: now
+    });
   }
 }
 
-/* REGISTER */
+/* =========================
+   REGISTER
+========================= */
 
-app.post("/api/register", async (req, res) => {
-  try {
-    const username =
-      String(req.body.username || "").trim();
+app.post(
+  "/api/register",
+  async (req, res) => {
+    try {
+      const username =
+        String(
+          req.body.username || ""
+        ).trim();
 
-    const displayName =
-      String(req.body.displayName || username)
-        .trim()
-        .slice(0, 30);
+      const displayName =
+        String(
+          req.body.displayName ||
+          username
+        )
+          .trim()
+          .slice(0, 30);
 
-    const password =
-      String(req.body.password || "");
+      const password =
+        String(
+          req.body.password || ""
+        );
 
-    if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
-      return res.status(400).json({
-        error: "Ник: 3–20 символов, буквы, цифры и _"
-      });
-    }
-
-    if (password.length < 4) {
-      return res.status(400).json({
-        error: "Пароль минимум 4 символа"
-      });
-    }
-
-    const exists = await db(
-      `
-      SELECT id
-      FROM users
-      WHERE LOWER(username)=LOWER($1)
-      `,
-      [username]
-    );
-
-    if (exists.rowCount) {
-      return res.status(409).json({
-        error: "Такой ник уже занят"
-      });
-    }
-
-    const hash =
-      await bcrypt.hash(password, 10);
-
-    const r = await db(
-      `
-      INSERT INTO users(
-        username,
-        display_name,
-        password_hash
-      )
-      VALUES($1,$2,$3)
-      RETURNING id,username,display_name
-      `,
-      [
-        username,
-        displayName || username,
-        hash
-      ]
-    );
-
-    const user = r.rows[0];
-
-    res.json({
-      token: makeToken(user),
-      user
-    });
-  } catch (e) {
-    console.error(e);
-
-    res.status(500).json({
-      error: "Ошибка сервера"
-    });
-  }
-});
-
-/* LOGIN */
-
-app.post("/api/login", async (req, res) => {
-  try {
-    const username =
-      String(req.body.username || "").trim();
-
-    const password =
-      String(req.body.password || "");
-
-    const r = await db(
-      `
-      SELECT
-        id,
-        username,
-        display_name,
-        password_hash
-      FROM users
-      WHERE LOWER(username)=LOWER($1)
-      `,
-      [username]
-    );
-
-    if (!r.rowCount) {
-      return res.status(401).json({
-        error: "Неверный логин или пароль"
-      });
-    }
-
-    const user = r.rows[0];
-
-    if (
-      !(await bcrypt.compare(
-        password,
-        user.password_hash
-      ))
-    ) {
-      return res.status(401).json({
-        error: "Неверный логин или пароль"
-      });
-    }
-
-    res.json({
-      token: makeToken(user),
-      user: {
-        id: user.id,
-        username: user.username,
-        display_name:
-          user.display_name || user.username
+      if (
+        !/^[a-zA-Z0-9_]{3,20}$/
+          .test(username)
+      ) {
+        return res.status(400).json({
+          error:
+            "Ник: 3–20 символов, буквы, цифры и _"
+        });
       }
-    });
-  } catch (e) {
-    console.error(e);
 
-    res.status(500).json({
-      error: "Ошибка сервера"
-    });
+      if (password.length < 4) {
+        return res.status(400).json({
+          error:
+            "Пароль минимум 4 символа"
+        });
+      }
+
+      const exists =
+        await db(
+          `
+          SELECT id
+          FROM users
+          WHERE LOWER(username)
+            = LOWER($1)
+          `,
+          [username]
+        );
+
+      if (exists.rowCount) {
+        return res.status(409).json({
+          error:
+            "Такой ник уже занят"
+        });
+      }
+
+      const hash =
+        await bcrypt.hash(
+          password,
+          10
+        );
+
+      const r =
+        await db(
+          `
+          INSERT INTO users(
+            username,
+            display_name,
+            password_hash
+          )
+          VALUES($1,$2,$3)
+
+          RETURNING
+            id,
+            username,
+            display_name,
+            last_seen
+          `,
+          [
+            username,
+            displayName || username,
+            hash
+          ]
+        );
+
+      const user =
+        makeUser(r.rows[0]);
+
+      return res.json({
+        token:
+          makeToken(r.rows[0]),
+        user
+      });
+
+    } catch (e) {
+      console.error(e);
+
+      return res.status(500).json({
+        error:
+          "Ошибка сервера"
+      });
+    }
   }
-});
+);
 
-/* ME */
+/* =========================
+   LOGIN
+========================= */
 
-app.get("/api/me", auth, async (req, res) => {
-  const r = await db(
-    `
-    SELECT
-      id,
-      username,
-      COALESCE(display_name,username)
-      AS display_name,
-      created_at,
-      last_seen
-    FROM users
-    WHERE id=$1
-    `,
-    [req.user.id]
-  );
+app.post(
+  "/api/login",
+  async (req, res) => {
+    try {
+      const username =
+        String(
+          req.body.username || ""
+        ).trim();
 
-  if (!r.rowCount) {
-    return res.status(404).json({
-      error: "Пользователь не найден"
-    });
+      const password =
+        String(
+          req.body.password || ""
+        );
+
+      const r =
+        await db(
+          `
+          SELECT
+            id,
+            username,
+            display_name,
+            password_hash,
+            last_seen
+          FROM users
+          WHERE LOWER(username)
+            = LOWER($1)
+          `,
+          [username]
+        );
+
+      if (!r.rowCount) {
+        return res.status(401).json({
+          error:
+            "Неверный логин или пароль"
+        });
+      }
+
+      const user =
+        r.rows[0];
+
+      const valid =
+        await bcrypt.compare(
+          password,
+          user.password_hash
+        );
+
+      if (!valid) {
+        return res.status(401).json({
+          error:
+            "Неверный логин или пароль"
+        });
+      }
+
+      const safeUser =
+        makeUser(user);
+
+      return res.json({
+        token:
+          makeToken(user),
+
+        user: safeUser
+      });
+
+    } catch (e) {
+      console.error(e);
+
+      return res.status(500).json({
+        error:
+          "Ошибка сервера"
+      });
+    }
   }
+);
 
-  res.json(r.rows[0]);
-});
+/* =========================
+   ME
+========================= */
 
-/* CHANGE DISPLAY NAME */
+app.get(
+  "/api/me",
+  auth,
+  async (req, res) => {
+    try {
+      const r =
+        await db(
+          `
+          SELECT
+            id,
+            username,
+            COALESCE(
+              display_name,
+              username
+            ) AS display_name,
+            created_at,
+            last_seen
+          FROM users
+          WHERE id=$1
+          `,
+          [req.user.id]
+        );
 
-app.patch("/api/me", auth, async (req, res) => {
-  const name =
-    String(req.body.displayName || "")
-      .trim()
-      .slice(0, 30);
+      if (!r.rowCount) {
+        return res.status(404).json({
+          error:
+            "Пользователь не найден"
+        });
+      }
 
-  if (!name) {
-    return res.status(400).json({
-      error: "Имя не может быть пустым"
-    });
+      const user =
+        makeUser(r.rows[0]);
+
+      user.created_at =
+        r.rows[0].created_at;
+
+      return res.json(user);
+
+    } catch (e) {
+      console.error(e);
+
+      return res.status(500).json({
+        error:
+          "Ошибка сервера"
+      });
+    }
   }
+);
 
-  const r = await db(
-    `
-    UPDATE users
-    SET display_name=$1
-    WHERE id=$2
-    RETURNING id,username,display_name
-    `,
-    [name, req.user.id]
-  );
+/* =========================
+   CHANGE DISPLAY NAME
+========================= */
 
-  res.json(r.rows[0]);
-});
+app.patch(
+  "/api/me",
+  auth,
+  async (req, res) => {
+    try {
+      const name =
+        String(
+          req.body.displayName || ""
+        )
+          .trim()
+          .slice(0, 30);
 
-/* SEARCH */
+      if (!name) {
+        return res.status(400).json({
+          error:
+            "Имя не может быть пустым"
+        });
+      }
 
-app.get("/api/users", auth, async (req, res) => {
-  const q =
-    String(req.query.q || "").trim();
+      const r =
+        await db(
+          `
+          UPDATE users
+          SET display_name=$1
+          WHERE id=$2
 
-  if (!q) return res.json([]);
+          RETURNING
+            id,
+            username,
+            display_name,
+            last_seen
+          `,
+          [
+            name,
+            req.user.id
+          ]
+        );
 
-  const r = await db(
-    `
-    SELECT
-      id,
-      username,
-      COALESCE(display_name,username)
-      AS display_name,
-      last_seen
-    FROM users
-    WHERE id<>$1
-      AND (
-        display_name ILIKE $2
-        OR username ILIKE $2
-      )
-    ORDER BY display_name
-    LIMIT 30
-    `,
-    [req.user.id, `%${q}%`]
-  );
+      if (!r.rowCount) {
+        return res.status(404).json({
+          error:
+            "Пользователь не найден"
+        });
+      }
 
-  res.json(
-    r.rows.map(x => ({
-      ...x,
-      online: online.has(x.id)
-    }))
-  );
-});
-
-/* CREATE CHAT */
-
-app.post("/api/chats", auth, async (req, res) => {
-  const otherId =
-    Number(req.body.userId);
-
-  if (
-    !Number.isInteger(otherId) ||
-    otherId === req.user.id
-  ) {
-    return res.status(400).json({
-      error: "Неверный пользователь"
-    });
-  }
-
-  const user = await db(
-    `
-    SELECT
-      id,
-      username,
-      COALESCE(display_name,username)
-      AS display_name,
-      last_seen
-    FROM users
-    WHERE id=$1
-    `,
-    [otherId]
-  );
-
-  if (!user.rowCount) {
-    return res.status(404).json({
-      error: "Пользователь не найден"
-    });
-  }
-
-  const existing = await db(
-    `
-    SELECT c.id
-    FROM chats c
-    JOIN chat_members a
-      ON a.chat_id=c.id
-    JOIN chat_members b
-      ON b.chat_id=c.id
-    WHERE a.user_id=$1
-      AND b.user_id=$2
-    LIMIT 1
-    `,
-    [req.user.id, otherId]
-  );
-
-  if (existing.rowCount) {
-    return res.json({
-      id: existing.rows[0].id,
-      user: user.rows[0]
-    });
-  }
-
-  const client =
-    await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-
-    const chat =
-      await client.query(
-        "INSERT INTO chats DEFAULT VALUES RETURNING id"
+      return res.json(
+        makeUser(r.rows[0])
       );
 
-    const chatId =
-      chat.rows[0].id;
+    } catch (e) {
+      console.error(e);
 
-    await client.query(
-      `
-      INSERT INTO chat_members(
-        chat_id,user_id
-      )
-      VALUES($1,$2),($1,$3)
-      `,
-      [
-        chatId,
-        req.user.id,
-        otherId
-      ]
-    );
-
-    await client.query("COMMIT");
-
-    res.json({
-      id: chatId,
-      user: user.rows[0]
-    });
-  } catch (e) {
-    await client.query("ROLLBACK");
-
-    console.error(e);
-
-    res.status(500).json({
-      error: "Ошибка сервера"
-    });
-  } finally {
-    client.release();
+      return res.status(500).json({
+        error:
+          "Ошибка сервера"
+      });
+    }
   }
-});
+);
 
-/* CHATS */
+/* =========================
+   SEARCH USERS
+========================= */
 
-app.get("/api/chats", auth, async (req, res) => {
-  const r = await db(
-    `
-    SELECT
-      c.id,
-      u.id AS user_id,
-      u.username,
-      COALESCE(
-        u.display_name,
-        u.username
-      ) AS display_name,
-      u.last_seen,
-      lm.text AS last_message,
-      lm.created_at AS last_message_at
-    FROM chats c
+app.get(
+  "/api/users",
+  auth,
+  async (req, res) => {
+    try {
+      const q =
+        String(
+          req.query.q || ""
+        ).trim();
 
-    JOIN chat_members me
-      ON me.chat_id=c.id
-     AND me.user_id=$1
+      if (!q) {
+        return res.json([]);
+      }
 
-    JOIN chat_members other
-      ON other.chat_id=c.id
-     AND other.user_id<>$1
+      const r =
+        await db(
+          `
+          SELECT
+            id,
+            username,
 
-    JOIN users u
-      ON u.id=other.user_id
+            COALESCE(
+              display_name,
+              username
+            ) AS display_name,
 
-    LEFT JOIN LATERAL (
-      SELECT text,created_at
-      FROM messages
-      WHERE chat_id=c.id
-      ORDER BY id DESC
-      LIMIT 1
-    ) lm ON true
+            last_seen
 
-    ORDER BY
-      COALESCE(
-        lm.created_at,
-        c.created_at
-      ) DESC
-    `,
-    [req.user.id]
-  );
+          FROM users
 
-  res.json(
-    r.rows.map(x => ({
-      ...x,
-      online: online.has(x.user_id)
-    }))
-  );
-});
+          WHERE id<>$1
 
-/* MESSAGES */
+            AND (
+              display_name
+                ILIKE $2
+
+              OR username
+                ILIKE $2
+            )
+
+          ORDER BY display_name
+
+          LIMIT 30
+          `,
+          [
+            req.user.id,
+            `%${q}%`
+          ]
+        );
+
+      return res.json(
+        r.rows.map(user => ({
+          ...makeUser(user),
+          online:
+            online.has(user.id)
+        }))
+      );
+
+    } catch (e) {
+      console.error(e);
+
+      return res.status(500).json({
+        error:
+          "Ошибка сервера"
+      });
+    }
+  }
+);
+
+/* =========================
+   CREATE CHAT
+========================= */
+
+app.post(
+  "/api/chats",
+  auth,
+  async (req, res) => {
+    try {
+      const otherId =
+        Number(req.body.userId);
+
+      if (
+        !Number.isInteger(otherId) ||
+        otherId === req.user.id
+      ) {
+        return res.status(400).json({
+          error:
+            "Неверный пользователь"
+        });
+      }
+
+      const user =
+        await db(
+          `
+          SELECT
+            id,
+            username,
+
+            COALESCE(
+              display_name,
+              username
+            ) AS display_name,
+
+            last_seen
+
+          FROM users
+
+          WHERE id=$1
+          `,
+          [otherId]
+        );
+
+      if (!user.rowCount) {
+        return res.status(404).json({
+          error:
+            "Пользователь не найден"
+        });
+      }
+
+      const existing =
+        await db(
+          `
+          SELECT c.id
+
+          FROM chats c
+
+          JOIN chat_members a
+            ON a.chat_id=c.id
+
+          JOIN chat_members b
+            ON b.chat_id=c.id
+
+          WHERE a.user_id=$1
+            AND b.user_id=$2
+
+          LIMIT 1
+          `,
+          [
+            req.user.id,
+            otherId
+          ]
+        );
+
+      const otherUser =
+        makeUser(
+          user.rows[0]
+        );
+
+      if (existing.rowCount) {
+        return res.json({
+          id:
+            existing.rows[0].id,
+
+          user:
+            otherUser
+        });
+      }
+
+      const client =
+        await pool.connect();
+
+      try {
+        await client.query(
+          "BEGIN"
+        );
+
+        const chat =
+          await client.query(
+            `
+            INSERT INTO chats
+            DEFAULT VALUES
+
+            RETURNING id
+            `
+          );
+
+        const chatId =
+          chat.rows[0].id;
+
+        await client.query(
+          `
+          INSERT INTO chat_members(
+            chat_id,
+            user_id
+          )
+
+          VALUES
+            ($1,$2),
+            ($1,$3)
+          `,
+          [
+            chatId,
+            req.user.id,
+            otherId
+          ]
+        );
+
+        await client.query(
+          "COMMIT"
+        );
+
+        return res.json({
+          id: chatId,
+          user: otherUser
+        });
+
+      } catch (e) {
+        await client.query(
+          "ROLLBACK"
+        );
+
+        throw e;
+
+      } finally {
+        client.release();
+      }
+
+    } catch (e) {
+      console.error(e);
+
+      return res.status(500).json({
+        error:
+          "Ошибка сервера"
+      });
+    }
+  }
+);
+
+/* =========================
+   CHAT LIST
+========================= */
+
+app.get(
+  "/api/chats",
+  auth,
+  async (req, res) => {
+    try {
+      const r =
+        await db(
+          `
+          SELECT
+            c.id,
+
+            u.id AS user_id,
+
+            u.username,
+
+            COALESCE(
+              u.display_name,
+              u.username
+            ) AS display_name,
+
+            u.last_seen,
+
+            lm.text
+              AS last_message,
+
+            lm.created_at
+              AS last_message_at
+
+          FROM chats c
+
+          JOIN chat_members me
+            ON me.chat_id=c.id
+           AND me.user_id=$1
+
+          JOIN chat_members other
+            ON other.chat_id=c.id
+           AND other.user_id<>$1
+
+          JOIN users u
+            ON u.id=other.user_id
+
+          LEFT JOIN LATERAL (
+            SELECT
+              text,
+              created_at
+
+            FROM messages
+
+            WHERE chat_id=c.id
+
+            ORDER BY id DESC
+
+            LIMIT 1
+          ) lm ON true
+
+          ORDER BY
+            COALESCE(
+              lm.created_at,
+              c.created_at
+            ) DESC
+          `,
+          [req.user.id]
+        );
+
+      return res.json(
+        r.rows.map(x => ({
+          id: x.id,
+
+          user_id:
+            x.user_id,
+
+          username:
+            x.username,
+
+          display_name:
+            x.display_name,
+
+          avatar:
+            avatarLetter(
+              x.display_name,
+              x.username
+            ),
+
+          last_seen:
+            x.last_seen,
+
+          last_message:
+            x.last_message,
+
+          last_message_at:
+            x.last_message_at,
+
+          online:
+            online.has(
+              x.user_id
+            )
+        }))
+      );
+
+    } catch (e) {
+      console.error(e);
+
+      return res.status(500).json({
+        error:
+          "Ошибка сервера"
+      });
+    }
+  }
+);
+
+/* =========================
+   GET MESSAGES
+========================= */
 
 app.get(
   "/api/chats/:id/messages",
   auth,
   async (req, res) => {
-    const chatId =
-      Number(req.params.id);
+    try {
+      const chatId =
+        Number(req.params.id);
 
-    if (
-      !(await isMember(
-        chatId,
-        req.user.id
-      ))
-    ) {
-      return res.status(403).json({
-        error: "Нет доступа"
+      if (
+        !(await isMember(
+          chatId,
+          req.user.id
+        ))
+      ) {
+        return res.status(403).json({
+          error:
+            "Нет доступа"
+        });
+      }
+
+      const r =
+        await db(
+          `
+          SELECT
+
+            m.id,
+
+            m.chat_id,
+
+            m.sender_id,
+
+            u.username
+              AS sender_username,
+
+            COALESCE(
+              u.display_name,
+              u.username
+            ) AS sender_display_name,
+
+            m.text,
+
+            m.reply_to_id,
+
+            m.read_at,
+
+            m.created_at,
+
+            rm.text
+              AS reply_text,
+
+            ru.username
+              AS reply_username,
+
+            COALESCE(
+              ru.display_name,
+              ru.username
+            ) AS reply_display_name
+
+          FROM messages m
+
+          JOIN users u
+            ON u.id=m.sender_id
+
+          LEFT JOIN messages rm
+            ON rm.id=m.reply_to_id
+
+          LEFT JOIN users ru
+            ON ru.id=rm.sender_id
+
+          WHERE m.chat_id=$1
+
+          ORDER BY m.id ASC
+
+          LIMIT 300
+          `,
+          [chatId]
+        );
+
+      return res.json(
+        r.rows.map(message => ({
+          ...message,
+
+          sender_avatar:
+            avatarLetter(
+              message.sender_display_name,
+              message.sender_username
+            ),
+
+          reply_avatar:
+            message.reply_display_name
+              ? avatarLetter(
+                  message.reply_display_name,
+                  message.reply_username
+                )
+              : null
+        }))
+      );
+
+    } catch (e) {
+      console.error(e);
+
+      return res.status(500).json({
+        error:
+          "Ошибка сервера"
       });
     }
-
-    const r = await db(
-      `
-      SELECT
-        m.id,
-        m.chat_id,
-        m.sender_id,
-        u.username AS sender_username,
-        COALESCE(
-          u.display_name,
-          u.username
-        ) AS sender_display_name,
-        m.text,
-        m.read_at,
-        m.created_at,
-
-        rm.text AS reply_text,
-        ru.username AS reply_username,
-        COALESCE(
-          ru.display_name,
-          ru.username
-        ) AS reply_display_name
-
-      FROM messages m
-
-      JOIN users u
-        ON u.id=m.sender_id
-
-      LEFT JOIN messages rm
-        ON rm.id=m.reply_to_id
-
-      LEFT JOIN users ru
-        ON ru.id=rm.sender_id
-
-      WHERE m.chat_id=$1
-      ORDER BY m.id ASC
-      LIMIT 300
-      `,
-      [chatId]
-    );
-
-    res.json(r.rows);
   }
 );
 
-/* READ */
+/* =========================
+   MARK READ
+========================= */
 
 app.post(
   "/api/chats/:id/read",
   auth,
   async (req, res) => {
-    const chatId =
-      Number(req.params.id);
+    try {
+      const chatId =
+        Number(req.params.id);
 
-    if (
-      !(await isMember(
-        chatId,
-        req.user.id
-      ))
-    ) {
-      return res.status(403).json({
-        error: "Нет доступа"
-      });
-    }
+      if (
+        !(await isMember(
+          chatId,
+          req.user.id
+        ))
+      ) {
+        return res.status(403).json({
+          error:
+            "Нет доступа"
+        });
+      }
 
-    await db(
-      `
-      UPDATE messages
-      SET read_at=NOW()
-      WHERE chat_id=$1
-        AND sender_id<>$2
-        AND read_at IS NULL
-      `,
-      [
-        chatId,
-        req.user.id
-      ]
-    );
-
-    const members =
       await db(
         `
-        SELECT user_id
-        FROM chat_members
+        UPDATE messages
+
+        SET read_at=NOW()
+
         WHERE chat_id=$1
+
+          AND sender_id<>$2
+
+          AND read_at IS NULL
         `,
-        [chatId]
-      );
-
-    for (const m of members.rows) {
-      io.to(
-        "user:" + m.user_id
-      ).emit(
-        "messagesRead",
-        {
+        [
           chatId,
-          userId: req.user.id
-        }
+          req.user.id
+        ]
       );
-    }
 
-    res.json({ ok: true });
+      const members =
+        await db(
+          `
+          SELECT user_id
+
+          FROM chat_members
+
+          WHERE chat_id=$1
+          `,
+          [chatId]
+        );
+
+      for (
+        const member
+        of members.rows
+      ) {
+        io.to(
+          "user:" +
+          member.user_id
+        ).emit(
+          "messagesRead",
+          {
+            chatId,
+            userId:
+              req.user.id
+          }
+        );
+      }
+
+      return res.json({
+        ok: true
+      });
+
+    } catch (e) {
+      console.error(e);
+
+      return res.status(500).json({
+        error:
+          "Ошибка сервера"
+      });
+    }
   }
 );
 
-/* SOCKET */
+/* =========================
+   SOCKET AUTH
+========================= */
 
-io.use((socket, next) => {
-  try {
-    socket.user =
-      jwt.verify(
-        socket.handshake.auth?.token,
-        JWT_SECRET
-      );
+io.use(
+  (socket, next) => {
+    try {
+      const token =
+        socket.handshake
+          .auth?.token;
 
-    next();
-  } catch {
-    next(
-      new Error(
-        "Авторизация не пройдена"
-      )
-    );
-  }
-});
+      socket.user =
+        jwt.verify(
+          token,
+          JWT_SECRET
+        );
 
-io.on("connection", socket => {
-  const userId =
-    socket.user.id;
+      next();
 
-  socket.join(
-    "user:" + userId
-  );
-
-  setOnline(
-    userId,
-    socket.id
-  );
-
-  socket.on(
-    "joinChat",
-    async chatId => {
-      chatId = Number(chatId);
-
-      if (
-        await isMember(
-          chatId,
-          userId
+    } catch {
+      next(
+        new Error(
+          "Авторизация не пройдена"
         )
-      ) {
-        socket.join(
-          "chat:" + chatId
-        );
-      }
+      );
     }
-  );
+  }
+);
 
-  socket.on(
-    "sendMessage",
-    async (data, callback) => {
-      try {
-        const chatId =
-          Number(data?.chatId);
+/* =========================
+   SOCKET CONNECTION
+========================= */
 
-        const text =
-          String(data?.text || "")
-            .trim()
-            .slice(0, 2000);
+io.on(
+  "connection",
+  socket => {
+    const userId =
+      socket.user.id;
 
-        const replyTo =
-          data?.replyTo
-            ? Number(data.replyTo)
-            : null;
+    socket.join(
+      "user:" + userId
+    );
 
-        if (!text) {
-          return callback?.({
-            ok: false,
-            error: "Пустое сообщение"
-          });
+    setOnline(
+      userId,
+      socket.id
+    );
+
+    /* JOIN CHAT */
+
+    socket.on(
+      "joinChat",
+      async chatId => {
+        try {
+          chatId =
+            Number(chatId);
+
+          if (
+            await isMember(
+              chatId,
+              userId
+            )
+          ) {
+            socket.join(
+              "chat:" + chatId
+            );
+          }
+
+        } catch (e) {
+          console.error(e);
         }
+      }
+    );
 
-        if (
-          !(await isMember(
-            chatId,
-            userId
-          ))
-        ) {
-          return callback?.({
-            ok: false,
-            error: "Нет доступа"
-          });
-        }
+    /* SEND MESSAGE */
 
-        const r = await db(
-          `
-          INSERT INTO messages(
-            chat_id,
-            sender_id,
-            text,
-            reply_to_id
-          )
-          VALUES($1,$2,$3,$4)
-          RETURNING
-            id,
-            chat_id,
-            sender_id,
-            text,
-            reply_to_id,
-            read_at,
-            created_at
-          `,
-          [
-            chatId,
-            userId,
-            text,
-            replyTo
-          ]
-        );
+    socket.on(
+      "sendMessage",
+      async (
+        data,
+        callback
+      ) => {
+        try {
+          const chatId =
+            Number(
+              data?.chatId
+            );
 
-        const msg = r.rows[0];
+          const text =
+            String(
+              data?.text || ""
+            )
+              .trim()
+              .slice(0, 2000);
 
-        if (replyTo) {
-          const reply =
+          const replyTo =
+            data?.replyTo
+              ? Number(
+                  data.replyTo
+                )
+              : null;
+
+          if (!text) {
+            return callback?.({
+              ok: false,
+              error:
+                "Пустое сообщение"
+            });
+          }
+
+          if (
+            !Number.isInteger(
+              chatId
+            )
+          ) {
+            return callback?.({
+              ok: false,
+              error:
+                "Неверный чат"
+            });
+          }
+
+          if (
+            replyTo !== null &&
+            !Number.isInteger(
+              replyTo
+            )
+          ) {
+            return callback?.({
+              ok: false,
+              error:
+                "Неверный ответ"
+            });
+          }
+
+          if (
+            !(await isMember(
+              chatId,
+              userId
+            ))
+          ) {
+            return callback?.({
+              ok: false,
+              error:
+                "Нет доступа"
+            });
+          }
+
+          if (replyTo) {
+            const replyExists =
+              await db(
+                `
+                SELECT id
+
+                FROM messages
+
+                WHERE id=$1
+                  AND chat_id=$2
+                `,
+                [
+                  replyTo,
+                  chatId
+                ]
+              );
+
+            if (!replyExists.rowCount) {
+              return callback?.({
+                ok: false,
+                error:
+                  "Сообщение для ответа не найдено"
+              });
+            }
+          }
+
+          const r =
+            await db(
+              `
+              INSERT INTO messages(
+                chat_id,
+                sender_id,
+                text,
+                reply_to_id
+              )
+
+              VALUES(
+                $1,
+                $2,
+                $3,
+                $4
+              )
+
+              RETURNING
+                id,
+                chat_id,
+                sender_id,
+                text,
+                reply_to_id,
+                read_at,
+                created_at
+              `,
+              [
+                chatId,
+                userId,
+                text,
+                replyTo
+              ]
+            );
+
+          const msg =
+            r.rows[0];
+
+          const sender =
             await db(
               `
               SELECT
-                m.text,
-                u.username,
+                username,
+
                 COALESCE(
-                  u.display_name,
-                  u.username
+                  display_name,
+                  username
                 ) AS display_name
-              FROM messages m
-              JOIN users u
-                ON u.id=m.sender_id
-              WHERE m.id=$1
+
+              FROM users
+
+              WHERE id=$1
               `,
-              [replyTo]
+              [userId]
             );
 
-          if (reply.rowCount) {
-            msg.reply_text =
-              reply.rows[0].text;
+          if (sender.rowCount) {
+            msg.sender_username =
+              sender.rows[0]
+                .username;
 
-            msg.reply_username =
-              reply.rows[0].username;
+            msg.sender_display_name =
+              sender.rows[0]
+                .display_name;
 
-            msg.reply_display_name =
-              reply.rows[0].display_name;
+            msg.sender_avatar =
+              avatarLetter(
+                sender.rows[0]
+                  .display_name,
+
+                sender.rows[0]
+                  .username
+              );
           }
+
+          if (replyTo) {
+            const reply =
+              await db(
+                `
+                SELECT
+
+                  m.text,
+
+                  u.username,
+
+                  COALESCE(
+                    u.display_name,
+                    u.username
+                  ) AS display_name
+
+                FROM messages m
+
+                JOIN users u
+                  ON u.id=m.sender_id
+
+                WHERE m.id=$1
+                `,
+                [replyTo]
+              );
+
+            if (reply.rowCount) {
+              msg.reply_text =
+                reply.rows[0]
+                  .text;
+
+              msg.reply_username =
+                reply.rows[0]
+                  .username;
+
+              msg.reply_display_name =
+                reply.rows[0]
+                  .display_name;
+
+              msg.reply_avatar =
+                avatarLetter(
+                  reply.rows[0]
+                    .display_name,
+
+                  reply.rows[0]
+                    .username
+                );
+            }
+          }
+
+          io.to(
+            "chat:" + chatId
+          ).emit(
+            "newMessage",
+            msg
+          );
+
+          callback?.({
+            ok: true,
+            message: msg
+          });
+
+        } catch (e) {
+          console.error(e);
+
+          callback?.({
+            ok: false,
+            error:
+              "Ошибка отправки"
+          });
         }
-
-        msg.sender_username =
-          socket.user.username;
-
-        io.to(
-          "chat:" + chatId
-        ).emit(
-          "newMessage",
-          msg
-        );
-
-        callback?.({
-          ok: true
-        });
-      } catch (e) {
-        console.error(e);
-
-        callback?.({
-          ok: false,
-          error: "Ошибка отправки"
-        });
       }
-    }
-  );
+    );
 
-  socket.on(
-    "disconnect",
-    () => {
-      setOffline(
-        userId,
-        socket.id
-      ).catch(console.error);
-    }
-  );
-});
+    /* DISCONNECT */
 
-app.get("/health", (req, res) => {
-  res.json({
-    ok: true,
-    service: "M-Talk"
-  });
-});
+    socket.on(
+      "disconnect",
+      () => {
+        setOffline(
+          userId,
+          socket.id
+        ).catch(
+          console.error
+        );
+      }
+    );
+  }
+);
+
+/* =========================
+   HEALTH
+========================= */
+
+app.get(
+  "/health",
+  (req, res) => {
+    res.json({
+      ok: true,
+      service:
+        "M-Talk"
+    });
+  }
+);
+
+/* =========================
+   START
+========================= */
 
 async function start() {
   try {
@@ -927,6 +1573,7 @@ async function start() {
         );
       }
     );
+
   } catch (e) {
     console.error(e);
     process.exit(1);
