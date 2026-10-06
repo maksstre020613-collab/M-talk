@@ -15,7 +15,6 @@ const { Server } = require("socket.io");
 
 const app = express();
 
-// ВАЖНО ДЛЯ RENDER
 app.set("trust proxy", 1);
 
 const server = http.createServer(app);
@@ -99,6 +98,11 @@ app.use(
 
                 scriptSrc: [
                     "'self'",
+                    "'unsafe-inline'",
+                ],
+
+                // ЕДИНСТВЕННОЕ ИСПРАВЛЕНИЕ
+                scriptSrcAttr: [
                     "'unsafe-inline'",
                 ],
 
@@ -187,15 +191,6 @@ function normalizeUsername(username) {
     return String(username || "")
         .trim()
         .replace(/\s+/g, "");
-}
-
-function escapeHtml(value) {
-    return String(value)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
 }
 
 function getUserById(id) {
@@ -2045,7 +2040,6 @@ function addMessage(
         empty.remove();
     }
 
-    // Не добавляем одно сообщение дважды
     if (
         box.querySelector(
             '[data-message-id="' +
