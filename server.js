@@ -660,10 +660,15 @@ app.patch(
 
 /* =========================
    SEARCH USERS
+   /api/users
+   /api/users/search
 ========================= */
 
 app.get(
-  "/api/users",
+  [
+    "/api/users",
+    "/api/users/search"
+  ],
   auth,
   async (req, res) => {
     try {
@@ -715,6 +720,7 @@ app.get(
       return res.json(
         r.rows.map(user => ({
           ...makeUser(user),
+
           online:
             online.has(user.id)
         }))
