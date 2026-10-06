@@ -25,9 +25,7 @@ async function api(url, options = {}) {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(
-      data.error || "Ошибка сервера"
-    );
+    throw new Error(data.error || "Ошибка сервера");
   }
 
   return data;
@@ -61,11 +59,7 @@ $("registerBtn").onclick = async () => {
     });
 
     token = data.token;
-
-    localStorage.setItem(
-      "mtalk_token",
-      token
-    );
+    localStorage.setItem("mtalk_token", token);
 
     await startApp();
   } catch (e) {
@@ -86,11 +80,7 @@ $("loginBtn").onclick = async () => {
     });
 
     token = data.token;
-
-    localStorage.setItem(
-      "mtalk_token",
-      token
-    );
+    localStorage.setItem("mtalk_token", token);
 
     await startApp();
   } catch (e) {
@@ -109,14 +99,8 @@ async function startApp() {
     $("auth").hidden = true;
     $("app").hidden = false;
 
+    updateMyProfile();
     applyTheme();
-
-    $("topTitle").textContent =
-      me.display_name ||
-      me.username;
-
-    $("topStatus").textContent =
-      "в сети";
 
     connectSocket();
     loadChats();
@@ -124,6 +108,29 @@ async function startApp() {
   } catch (e) {
     console.error(e);
     logout();
+  }
+}
+
+function updateMyProfile() {
+  if (!me) return;
+
+  const name = me.display_name || me.username;
+
+  $("topTitle").textContent = name;
+  $("topStatus").textContent = "в сети";
+
+  if ($("profileName")) {
+    $("profileName").textContent = name;
+  }
+
+  if ($("profileUsername")) {
+    $("profileUsername").textContent =
+      "@" + me.username;
+  }
+
+  if ($("profileAvatar")) {
+    $("profileAvatar").textContent =
+      getInitials(name);
   }
 }
 
@@ -145,18 +152,14 @@ function connectSocket() {
   socket.on("newMessage", message => {
     if (
       currentChat &&
-      Number(message.chat_id) ===
-      Number(currentChat.id)
+      Number(message.chat_id) === Number(currentChat.id)
     ) {
       currentMessages.push(message);
 
       renderMessages();
       scrollBottom();
 
-      if (
-        Number(message.sender_id) !==
-        Number(me.id)
-      ) {
+      if (Number(message.sender_id) !== Number(me.id)) {
         markRead();
       }
     }
@@ -167,8 +170,7 @@ function connectSocket() {
   socket.on("messagesRead", data => {
     if (
       currentChat &&
-      Number(data.chatId) ===
-      Number(currentChat.id)
+      Number(data.chatId) === Number(currentChat.id)
     ) {
       loadMessages(false);
     }
@@ -177,13 +179,12 @@ function connectSocket() {
   socket.on("userStatus", data => {
     if (
       currentChat &&
-      Number(currentChat.user_id) ===
-      Number(data.userId)
+      Number(currentChat.user_id) === Number(data.userId)
     ) {
       $("topStatus").textContent =
-        data.online
-          ? "● в сети"
-          : "был(а) недавно";
+        data.online ? "● в сети" : "был(а) недавно";
+
+      currentChat.online = data.online;
     }
 
     loadChats();
@@ -196,54 +197,37 @@ function connectSocket() {
 
 async function loadChats() {
   try {
-    const chats =
-      await api("/api/chats");
+    const chats = await api("/api/chats");
 
     $("chatList").innerHTML = "";
 
     if (!chats.length) {
       $("chatList").innerHTML = `
-        <div style="
-          padding:40px 20px;
-          text-align:center;
-          color:#8d9aa7
-        ">
+        <div class="emptyChats">
           🔎 Найдите человека через поиск<br>
           и начните общение
         </div>
       `;
-
       return;
     }
 
     chats.forEach(chat => {
-      const item =
-        document.createElement("div");
-
+      const item = document.createElement("div");
       item.className = "chatItem";
 
       const name =
         chat.display_name ||
         chat.username;
 
-      const letter =
-        getInitials(name);
-
       item.innerHTML = `
         <div class="avatar">
-          ${escapeHtml(letter)}
+          ${escapeHtml(getInitials(name))}
         </div>
 
         <div class="chatInfo">
-          <b>
-            ${escapeHtml(name)}
-          </b>
+          <b>${escapeHtml(name)}</b>
 
-          <span class="${
-            chat.online
-              ? "online"
-              : ""
-          }">
+          <span class="${chat.online ? "online" : ""}">
             ${
               chat.online
                 ? "● в сети"
@@ -256,11 +240,9 @@ async function loadChats() {
         </div>
       `;
 
-      item.onclick = () =>
-        openChat(chat);
+      item.onclick = () => openChat(chat);
 
-      $("chatList")
-        .appendChild(item);
+      $("chatList").appendChild(item);
     });
 
   } catch (e) {
@@ -286,18 +268,15 @@ let searchTimer = null;
 $("searchInput").oninput = () => {
   clearTimeout(searchTimer);
 
-  searchTimer =
-    setTimeout(
-      searchUsers,
-      250
-    );
+  searchTimer = setTimeout(
+    searchUsers,
+    250
+  );
 };
 
 async function searchUsers() {
   const query =
-    $("searchInput")
-      .value
-      .trim();
+    $("searchInput").value.trim();
 
   if (!query) {
     $("searchResults").innerHTML = "";
@@ -305,33 +284,25 @@ async function searchUsers() {
   }
 
   try {
-    const users =
-      await api(
-        "/api/users?q=" +
-        encodeURIComponent(query)
-      );
+    const users = await api(
+      "/api/users?q=" +
+      encodeURIComponent(query)
+    );
 
     $("searchResults").innerHTML = "";
 
     if (!users.length) {
       $("searchResults").innerHTML = `
-        <div style="
-          padding:18px;
-          color:#8d9aa7
-        ">
+        <div class="noResults">
           Никого не найдено
         </div>
       `;
-
       return;
     }
 
     users.forEach(user => {
-      const item =
-        document.createElement("div");
-
-      item.className =
-        "userResult";
+      const item = document.createElement("div");
+      item.className = "userResult";
 
       const name =
         user.display_name ||
@@ -339,38 +310,25 @@ async function searchUsers() {
 
       item.innerHTML = `
         <div class="avatar">
-          ${escapeHtml(
-            getInitials(name)
-          )}
+          ${escapeHtml(getInitials(name))}
         </div>
 
         <div class="userInfo">
-          <b>
-            ${escapeHtml(name)}
-          </b>
+          <b>${escapeHtml(name)}</b>
 
-          <span class="${
-            user.online
-              ? "online"
-              : ""
-          }">
+          <span class="${user.online ? "online" : ""}">
             ${
               user.online
                 ? "● в сети"
-                : "@" +
-                  escapeHtml(
-                    user.username
-                  )
+                : "@" + escapeHtml(user.username)
             }
           </span>
         </div>
       `;
 
-      item.onclick = () =>
-        startChat(user);
+      item.onclick = () => startChat(user);
 
-      $("searchResults")
-        .appendChild(item);
+      $("searchResults").appendChild(item);
     });
 
   } catch (e) {
@@ -384,20 +342,18 @@ async function searchUsers() {
 
 async function startChat(user) {
   try {
-    const chat =
-      await api("/api/chats", {
-        method: "POST",
-        body: JSON.stringify({
-          userId: user.id
-        })
-      });
+    const chat = await api("/api/chats", {
+      method: "POST",
+      body: JSON.stringify({
+        userId: user.id
+      })
+    });
 
     openChat({
       ...chat,
       user_id: user.id,
       username: user.username,
-      display_name:
-        user.display_name,
+      display_name: user.display_name,
       online: user.online
     });
 
@@ -417,38 +373,43 @@ async function openChat(chat) {
   $("chat").hidden = false;
   $("backBtn").hidden = false;
 
-  $("topTitle").textContent =
+  const name =
     chat.display_name ||
     chat.username;
+
+  $("topTitle").textContent = name;
 
   $("topStatus").textContent =
     chat.online
       ? "● в сети"
       : "был(а) недавно";
 
-  socket.emit(
-    "joinChat",
-    chat.id
-  );
+  socket.emit("joinChat", chat.id);
 
   await loadMessages();
 
   markRead();
+
+  setTimeout(() => {
+    $("messageInput").focus();
+  }, 100);
 }
 
 $("backBtn").onclick = () => {
   currentChat = null;
+  replyTo = null;
 
   $("chat").hidden = true;
   $("chatList").hidden = false;
   $("backBtn").hidden = true;
 
+  cancelReply();
+
   $("topTitle").textContent =
     me.display_name ||
     me.username;
 
-  $("topStatus").textContent =
-    "в сети";
+  $("topStatus").textContent = "в сети";
 
   loadChats();
 };
@@ -457,9 +418,7 @@ $("backBtn").onclick = () => {
    СООБЩЕНИЯ
 ========================= */
 
-async function loadMessages(
-  shouldScroll = true
-) {
+async function loadMessages(shouldScroll = true) {
   if (!currentChat) return;
 
   try {
@@ -483,16 +442,19 @@ function renderMessages() {
   $("messages").innerHTML = "";
 
   currentMessages.forEach(message => {
-    const element =
-      document.createElement("div");
+    const row = document.createElement("div");
 
     const mine =
-      Number(message.sender_id) ===
-      Number(me.id);
+      Number(message.sender_id) === Number(me.id);
 
-    element.className =
-      "message " +
+    row.className =
+      "messageRow " +
       (mine ? "mine" : "other");
+
+    const bubble =
+      document.createElement("div");
+
+    bubble.className = "messageBubble";
 
     const time =
       new Date(
@@ -518,9 +480,9 @@ function renderMessages() {
             )}
           </b>
 
-          ${escapeHtml(
-            message.reply_text
-          )}
+          <span>
+            ${escapeHtml(message.reply_text)}
+          </span>
         </div>
       `;
     }
@@ -528,35 +490,32 @@ function renderMessages() {
     const checks = mine
       ? `
         <span class="check">
-          ${message.read_at
-            ? "✓✓"
-            : "✓"}
+          ${message.read_at ? "✓✓" : "✓"}
         </span>
       `
       : "";
 
-    element.innerHTML = `
+    bubble.innerHTML = `
       ${reply}
 
-      <div class="messageText">
-        ${escapeHtml(
-          message.text
-        )}
-      </div>
+      <span class="messageText">
+        ${escapeHtml(message.text)}
+      </span>
 
-      <div class="messageMeta">
+      <span class="messageMeta">
         ${time}
         ${checks}
-      </div>
+      </span>
     `;
 
+    row.appendChild(bubble);
+
     addSwipeReply(
-      element,
+      row,
       message
     );
 
-    $("messages")
-      .appendChild(element);
+    $("messages").appendChild(row);
   });
 }
 
@@ -564,8 +523,7 @@ function renderMessages() {
    ОТПРАВКА
 ========================= */
 
-$("sendBtn").onclick =
-  sendMessage;
+$("sendBtn").onclick = sendMessage;
 
 $("messageInput").onkeydown = e => {
   if (
@@ -579,9 +537,7 @@ $("messageInput").onkeydown = e => {
 
 function sendMessage() {
   const text =
-    $("messageInput")
-      .value
-      .trim();
+    $("messageInput").value.trim();
 
   if (
     !text ||
@@ -596,26 +552,18 @@ function sendMessage() {
     {
       chatId: currentChat.id,
       text,
-      replyTo:
-        replyTo
-          ? replyTo.id
-          : null
+      replyTo: replyTo ? replyTo.id : null
     },
     result => {
-      if (
-        !result ||
-        !result.ok
-      ) {
+      if (!result || !result.ok) {
         alert(
           result?.error ||
           "Не удалось отправить сообщение"
         );
-
         return;
       }
 
       $("messageInput").value = "";
-
       cancelReply();
     }
   );
@@ -639,13 +587,10 @@ async function markRead() {
 }
 
 /* =========================
-   ОТВЕТ СМАХИВАНИЕМ
+   СВАЙП ДЛЯ ОТВЕТА
 ========================= */
 
-function addSwipeReply(
-  element,
-  message
-) {
+function addSwipeReply(element, message) {
   let startX = 0;
   let distance = 0;
 
@@ -653,22 +598,18 @@ function addSwipeReply(
     "touchstart",
     event => {
       startX =
-        event.touches[0]
-          .clientX;
+        event.touches[0].clientX;
 
       distance = 0;
     },
-    {
-      passive: true
-    }
+    { passive: true }
   );
 
   element.addEventListener(
     "touchmove",
     event => {
       distance =
-        event.touches[0]
-          .clientX -
+        event.touches[0].clientX -
         startX;
 
       if (
@@ -679,9 +620,7 @@ function addSwipeReply(
           `translateX(${distance}px)`;
       }
     },
-    {
-      passive: true
-    }
+    { passive: true }
   );
 
   element.addEventListener(
@@ -714,12 +653,10 @@ function setReply(message) {
 
 function cancelReply() {
   replyTo = null;
-
   $("replyBox").hidden = true;
 }
 
-$("cancelReply").onclick =
-  cancelReply;
+$("cancelReply").onclick = cancelReply;
 
 /* =========================
    НАСТРОЙКИ
@@ -728,12 +665,17 @@ $("cancelReply").onclick =
 $("settingsBtn").onclick = () => {
   $("settings").hidden = false;
 
-  $("profileName").textContent =
+  const name =
     me.display_name ||
     me.username;
 
+  $("profileName").textContent = name;
+
   $("profileUsername").textContent =
     "@" + me.username;
+
+  $("profileAvatar").textContent =
+    getInitials(name);
 
   $("newName").value =
     me.display_name || "";
@@ -743,59 +685,44 @@ $("closeSettings").onclick = () => {
   $("settings").hidden = true;
 };
 
-$("saveName").onclick =
-  async () => {
-    try {
-      const name =
-        $("newName")
-          .value
-          .trim();
+$("saveName").onclick = async () => {
+  try {
+    const name =
+      $("newName").value.trim();
 
-      const user =
-        await api(
-          "/api/me",
-          {
-            method: "PATCH",
-            body: JSON.stringify({
-              displayName: name
-            })
-          }
-        );
+    const user =
+      await api(
+        "/api/me",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            displayName: name
+          })
+        }
+      );
 
-      me = {
-        ...me,
-        ...user
-      };
+    me = {
+      ...me,
+      ...user
+    };
 
-      $("profileName")
-        .textContent =
-        me.display_name;
+    updateMyProfile();
 
-      $("profileUsername")
-        .textContent =
-        "@" + me.username;
+    $("settings").hidden = true;
 
-      $("topTitle")
-        .textContent =
-        me.display_name;
+    loadChats();
 
-      $("settings").hidden = true;
-
-      loadChats();
-
-    } catch (e) {
-      alert(e.message);
-    }
-  };
+  } catch (e) {
+    alert(e.message);
+  }
+};
 
 /* =========================
    ТЕМЫ
 ========================= */
 
 document
-  .querySelectorAll(
-    ".themeButtons button"
-  )
+  .querySelectorAll(".themeButtons button")
   .forEach(button => {
     button.onclick = () => {
       const theme =
@@ -816,41 +743,33 @@ function applyTheme() {
       "mtalk_theme"
     ) || "dark";
 
-  document.body
-    .classList
-    .remove(
-      "light",
-      "blue"
-    );
+  document.body.classList.remove(
+    "light",
+    "blue"
+  );
 
   if (theme !== "dark") {
-    document.body
-      .classList
-      .add(theme);
+    document.body.classList.add(theme);
   }
 }
 
 /* =========================
-   ВСПОМОГАТЕЛЬНЫЕ
+   АВАТАР
 ========================= */
 
 function getInitials(name) {
   const value =
-    String(name || "")
-      .trim();
+    String(name || "").trim();
 
   if (!value) {
     return "?";
   }
 
   const words =
-    value
-      .split(/\s+/)
-      .filter(Boolean);
+    value.split(/\s+/).filter(Boolean);
 
   if (words.length === 1) {
-    return words[0][0]
-      .toUpperCase();
+    return words[0][0].toUpperCase();
   }
 
   return (
@@ -859,34 +778,26 @@ function getInitials(name) {
   ).toUpperCase();
 }
 
+/* =========================
+   БЕЗОПАСНОСТЬ
+========================= */
+
 function escapeHtml(value) {
   return String(value ?? "")
-    .replaceAll(
-      "&",
-      "&amp;"
-    )
-    .replaceAll(
-      "<",
-      "&lt;"
-    )
-    .replaceAll(
-      ">",
-      "&gt;"
-    )
-    .replaceAll(
-      '"',
-      "&quot;"
-    )
-    .replaceAll(
-      "'",
-      "&#039;"
-    );
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
+
+/* =========================
+   ПРОКРУТКА
+========================= */
 
 function scrollBottom() {
   requestAnimationFrame(() => {
-    const messages =
-      $("messages");
+    const messages = $("messages");
 
     messages.scrollTop =
       messages.scrollHeight;
@@ -897,15 +808,12 @@ function scrollBottom() {
    ВЫХОД
 ========================= */
 
-$("logout").onclick =
-  () => {
-    logout();
-  };
+$("logout").onclick = () => {
+  logout();
+};
 
 function logout() {
-  localStorage.removeItem(
-    "mtalk_token"
-  );
+  localStorage.removeItem("mtalk_token");
 
   token = null;
 
