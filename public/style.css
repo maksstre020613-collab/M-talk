@@ -31,9 +31,9 @@ button {
   display: none !important;
 }
 
-/* =========================
+/* ========================================
    АВТОРИЗАЦИЯ
-========================= */
+======================================== */
 
 .auth {
   width: 100%;
@@ -56,14 +56,15 @@ button {
 
 .auth-card {
   width: min(420px, 100%);
+
   padding: 28px;
 
   border-radius: 25px;
 
-  background: rgba(27, 39, 53, .97);
+  background: rgba(27, 39, 53, 0.97);
 
   box-shadow:
-    0 20px 70px rgba(0, 0, 0, .55);
+    0 20px 70px rgba(0, 0, 0, 0.55);
 
   text-align: center;
 }
@@ -96,17 +97,21 @@ button {
 
 input {
   width: 100%;
+
   height: 48px;
 
   padding: 0 15px;
+
   margin: 6px 0;
 
   border: 1px solid rgba(255,255,255,.08);
+
   border-radius: 15px;
 
   outline: none;
 
   background: rgba(255,255,255,.07);
+
   color: white;
 }
 
@@ -122,6 +127,7 @@ input:focus {
   width: 100%;
 
   margin-top: 10px;
+
   padding: 14px;
 
   border-radius: 15px;
@@ -134,24 +140,29 @@ input:focus {
     );
 
   color: white;
+
   font-weight: bold;
 }
 
 .link {
   margin-top: 10px;
+
   background: none;
+
   color: #7ca9ff;
 }
 
 #authError {
   min-height: 20px;
+
   margin-top: 12px;
+
   color: #ff7070;
 }
 
-/* =========================
+/* ========================================
    ПРИЛОЖЕНИЕ
-========================= */
+======================================== */
 
 .app {
   width: 100%;
@@ -167,9 +178,9 @@ input:focus {
   background: #101b24;
 }
 
-/* =========================
+/* ========================================
    ВЕРХНЯЯ ПАНЕЛЬ
-========================= */
+======================================== */
 
 .topbar {
   width: 100%;
@@ -194,15 +205,18 @@ input:focus {
     0 2px 14px rgba(0,0,0,.35);
 
   position: relative;
+
   z-index: 10;
 }
 
 .titleBlock {
   flex: 1;
+
   min-width: 0;
 
   display: flex;
   flex-direction: column;
+
   justify-content: center;
 }
 
@@ -210,7 +224,9 @@ input:focus {
   font-size: 18px;
 
   white-space: nowrap;
+
   overflow: hidden;
+
   text-overflow: ellipsis;
 }
 
@@ -218,6 +234,7 @@ input:focus {
   margin-top: 2px;
 
   color: #d6cde0;
+
   font-size: 11px;
 
   white-space: nowrap;
@@ -235,6 +252,7 @@ input:focus {
   border-radius: 50%;
 
   background: rgba(255,255,255,.10);
+
   color: white;
 
   font-size: 23px;
@@ -246,12 +264,13 @@ input:focus {
 
 .icon:active {
   transform: scale(.9);
+
   background: rgba(255,255,255,.18);
 }
 
-/* =========================
+/* ========================================
    ПОИСК
-========================= */
+======================================== */
 
 .searchPanel {
   width: 100%;
@@ -264,6 +283,7 @@ input:focus {
     1px solid rgba(255,255,255,.06);
 
   position: relative;
+
   z-index: 8;
 }
 
@@ -273,6 +293,7 @@ input:focus {
 
 #searchResults {
   max-height: 45dvh;
+
   overflow-y: auto;
 }
 
@@ -281,6 +302,7 @@ input:focus {
   width: 100%;
 
   display: flex;
+
   align-items: center;
 
   gap: 11px;
@@ -309,9 +331,9 @@ input:focus {
   line-height: 1.6;
 }
 
-/* =========================
+/* ========================================
    АВАТАРЫ
-========================= */
+======================================== */
 
 .avatar {
   width: 46px;
@@ -320,6 +342,7 @@ input:focus {
   flex: 0 0 46px;
 
   display: grid;
+
   place-items: center;
 
   border-radius: 50%;
@@ -348,6 +371,7 @@ input:focus {
 .userInfo,
 .chatInfo {
   min-width: 0;
+
   flex: 1;
 }
 
@@ -356,7 +380,9 @@ input:focus {
   display: block;
 
   white-space: nowrap;
+
   overflow: hidden;
+
   text-overflow: ellipsis;
 }
 
@@ -367,10 +393,13 @@ input:focus {
   margin-top: 3px;
 
   color: #9ba8b5;
+
   font-size: 12px;
 
   white-space: nowrap;
+
   overflow: hidden;
+
   text-overflow: ellipsis;
 }
 
@@ -378,14 +407,15 @@ input:focus {
   color: #55d982 !important;
 }
 
-/* =========================
+/* ========================================
    СПИСОК ЧАТОВ
-========================= */
+======================================== */
 
 .chatList {
   width: 100%;
 
   flex: 1;
+
   min-height: 0;
 
   overflow-y: auto;
@@ -399,33 +429,37 @@ input:focus {
     #101b24;
 }
 
-/* =========================
+/* ========================================
    ОКНО ЧАТА
-========================= */
+======================================== */
 
 .chat {
   width: 100%;
 
   flex: 1;
+
   min-height: 0;
 
   display: flex;
+
   flex-direction: column;
 
   overflow: hidden;
 }
 
-/* =========================
-   СООБЩЕНИЯ
-========================= */
+/* ========================================
+   ОБЛАСТЬ СООБЩЕНИЙ
+======================================== */
 
 .messages {
   flex: 1 1 auto;
+
   min-height: 0;
 
   width: 100%;
 
   overflow-y: auto;
+
   overflow-x: hidden;
 
   overscroll-behavior: contain;
@@ -446,14 +480,16 @@ input:focus {
     #101b24;
 }
 
-/* =========================
+/* ========================================
    СТРОКА СООБЩЕНИЯ
-========================= */
+======================================== */
 
 .messageRow {
   width: 100%;
 
   display: flex;
+
+  align-items: flex-start;
 
   margin: 3px 0;
 
@@ -469,28 +505,31 @@ input:focus {
   justify-content: flex-start;
 }
 
-/* =========================
-   ПУЗЫРЁК
-========================= */
+/* ========================================
+   ПУЗЫРЬ СООБЩЕНИЯ
+   КОМПАКТНЫЙ TELEGRAM-СТИЛЬ
+======================================== */
 
 .messageBubble {
+  width: auto;
+
+  max-width: 78%;
+
   display: block;
 
-  width: fit-content;
+  padding: 5px 7px;
 
-  max-width: min(72%, 430px);
+  border-radius: 12px;
 
-  min-width: 0;
+  text-align: left;
 
-  padding:
-    7px
-    9px
-    6px;
-
-  border-radius: 15px;
+  text-align-last: left;
 
   overflow-wrap: anywhere;
+
   word-break: break-word;
+
+  line-height: 1.25;
 
   box-shadow:
     0 1px 2px rgba(0,0,0,.12);
@@ -498,6 +537,10 @@ input:focus {
   animation:
     messageIn .15s ease;
 }
+
+/* ========================================
+   МОИ СООБЩЕНИЯ
+======================================== */
 
 .messageRow.mine .messageBubble {
   background:
@@ -510,42 +553,59 @@ input:focus {
   border-bottom-right-radius: 4px;
 }
 
+/* ========================================
+   СООБЩЕНИЯ СОБЕСЕДНИКА
+======================================== */
+
 .messageRow.other .messageBubble {
   background: #263443;
 
   border-bottom-left-radius: 4px;
 }
 
-/* =========================
+/* ========================================
    ТЕКСТ
-========================= */
+======================================== */
 
 .messageText {
-  white-space: pre-wrap;
+  display: inline;
+
+  margin: 0;
+
+  padding: 0;
 
   font-size: 15px;
-  line-height: 1.3;
+
+  line-height: 1.25;
+
+  text-align: left;
+
+  white-space: pre-wrap;
 
   overflow-wrap: anywhere;
+
   word-break: break-word;
 }
 
-/* =========================
+/* ========================================
    ВРЕМЯ
-========================= */
+======================================== */
 
 .messageMeta {
   display: inline-flex;
 
   align-items: center;
 
-  gap: 3px;
+  margin-left: 5px;
 
-  margin-left: 7px;
+  position: relative;
+
+  top: 1px;
 
   color: #b9c5d1;
 
   font-size: 9px;
+
   line-height: 10px;
 
   white-space: nowrap;
@@ -553,23 +613,36 @@ input:focus {
   vertical-align: baseline;
 }
 
-.check {
-  font-size: 11px;
+/* ========================================
+   ГАЛОЧКИ
+======================================== */
 
-  letter-spacing: -1.5px;
+.check {
+  display: inline;
+
+  margin-left: 3px;
 
   color: #dce8f5;
+
+  font-size: 11px;
+
+  letter-spacing: -1px;
 }
 
-/* =========================
+/* ========================================
    ОТВЕТ ВНУТРИ СООБЩЕНИЯ
-========================= */
+======================================== */
 
 .replyPreview {
+  display: block;
+
   width: 100%;
 
-  margin-bottom: 5px;
-  padding: 5px 7px;
+  margin:
+    0 0 5px;
+
+  padding:
+    4px 6px;
 
   border-left:
     3px solid #9e8bea;
@@ -579,9 +652,12 @@ input:focus {
   background:
     rgba(255,255,255,.07);
 
+  text-align: left;
+
   overflow: hidden;
 
   font-size: 10px;
+
   line-height: 1.2;
 }
 
@@ -595,7 +671,9 @@ input:focus {
   font-size: 10px;
 
   white-space: nowrap;
+
   overflow: hidden;
+
   text-overflow: ellipsis;
 }
 
@@ -604,31 +682,36 @@ input:focus {
 
   color: #d0d7df;
 
+  white-space: nowrap;
+
   overflow: hidden;
 
-  white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-/* =========================
+/* ========================================
    АНИМАЦИЯ
-========================= */
+======================================== */
 
 @keyframes messageIn {
   from {
     opacity: 0;
-    transform: translateY(5px);
+
+    transform:
+      translateY(5px);
   }
 
   to {
     opacity: 1;
-    transform: translateY(0);
+
+    transform:
+      translateY(0);
   }
 }
 
-/* =========================
+/* ========================================
    ПАНЕЛЬ ОТВЕТА
-========================= */
+======================================== */
 
 .replyBox {
   width: 100%;
@@ -636,11 +719,13 @@ input:focus {
   flex: 0 0 auto;
 
   display: flex;
+
   align-items: center;
 
   gap: 8px;
 
-  padding: 6px 10px;
+  padding:
+    6px 10px;
 
   background: #202e3c;
 
@@ -650,6 +735,7 @@ input:focus {
 
 .replyBox > div {
   flex: 1;
+
   min-width: 0;
 }
 
@@ -666,6 +752,7 @@ input:focus {
 
 .replyBox b {
   color: #a996ff;
+
   font-size: 12px;
 }
 
@@ -673,6 +760,7 @@ input:focus {
   margin-top: 2px;
 
   color: #b9c3ce;
+
   font-size: 11px;
 }
 
@@ -689,9 +777,9 @@ input:focus {
   font-size: 23px;
 }
 
-/* =========================
+/* ========================================
    ПОЛЕ ВВОДА
-========================= */
+======================================== */
 
 .composer {
   width: 100%;
@@ -701,13 +789,13 @@ input:focus {
   min-height: 58px;
 
   display: flex;
+
   align-items: center;
 
   gap: 7px;
 
   padding:
-    6px
-    8px;
+    6px 8px;
 
   padding-bottom:
     max(
@@ -732,7 +820,8 @@ input:focus {
 
   margin: 0;
 
-  padding: 0 16px;
+  padding:
+    0 16px;
 
   border-radius: 23px;
 
@@ -749,6 +838,7 @@ input:focus {
   flex: 0 0 46px;
 
   display: grid;
+
   place-items: center;
 
   border-radius: 50%;
@@ -767,9 +857,9 @@ input:focus {
   transform: scale(.9);
 }
 
-/* =========================
+/* ========================================
    НАСТРОЙКИ
-========================= */
+======================================== */
 
 .modal {
   position: fixed;
@@ -779,7 +869,9 @@ input:focus {
   z-index: 100;
 
   display: flex;
+
   align-items: flex-end;
+
   justify-content: center;
 
   background:
@@ -790,6 +882,7 @@ input:focus {
   width: 100%;
 
   max-width: 600px;
+
   max-height: 90dvh;
 
   overflow-y: auto;
@@ -820,12 +913,14 @@ input:focus {
   position: absolute;
 
   top: 12px;
+
   right: 15px;
 
   width: 40px;
   height: 40px;
 
   display: grid;
+
   place-items: center;
 
   border-radius: 50%;
@@ -840,11 +935,13 @@ input:focus {
 
 .profile {
   display: flex;
+
   align-items: center;
 
   gap: 13px;
 
-  margin: 20px 0;
+  margin:
+    20px 0;
 }
 
 .profile span {
@@ -858,6 +955,7 @@ input:focus {
 .modal-card label,
 .modal-card h3 {
   display: block;
+
   margin-top: 18px;
 }
 
@@ -877,6 +975,7 @@ input:focus {
 
 .themeButtons {
   display: flex;
+
   gap: 8px;
 }
 
@@ -913,12 +1012,13 @@ input:focus {
   color: white;
 }
 
-/* =========================
+/* ========================================
    СВЕТЛАЯ ТЕМА
-========================= */
+======================================== */
 
 body.light {
   background: #edf2f7;
+
   color: #18222c;
 }
 
@@ -935,16 +1035,18 @@ body.light .messages {
 }
 
 body.light .composer {
-  background: #fff;
+  background: #ffffff;
+
   border-color: #00000012;
 }
 
 body.light .searchPanel {
-  background: #fff;
+  background: #ffffff;
 }
 
 body.light .messageRow.other .messageBubble {
-  background: #fff;
+  background: #ffffff;
+
   color: #18222c;
 
   box-shadow:
@@ -953,11 +1055,13 @@ body.light .messageRow.other .messageBubble {
 
 body.light input {
   background: #f0f3f6;
+
   color: #18222c;
 }
 
 body.light .modal-card {
-  background: #fff;
+  background: #ffffff;
+
   color: #18222c;
 }
 
@@ -966,9 +1070,9 @@ body.light .userInfo span {
   color: #71808e;
 }
 
-/* =========================
+/* ========================================
    СИНЯЯ ТЕМА
-========================= */
+======================================== */
 
 body.blue .topbar {
   background:
@@ -988,18 +1092,35 @@ body.blue .messageRow.mine .messageBubble {
     );
 }
 
-/* =========================
+/* ========================================
    МОБИЛЬНЫЕ
-========================= */
+======================================== */
 
 @media (max-width: 600px) {
 
   .messageBubble {
+    width: auto;
+
     max-width: 78%;
+
+    padding:
+      5px 7px;
+
+    text-align: left;
   }
 
   .messageText {
     font-size: 15px;
+
+    line-height: 1.25;
+
+    text-align: left;
+  }
+
+  .messageMeta {
+    font-size: 9px;
+
+    margin-left: 5px;
   }
 
   .messages {
@@ -1009,11 +1130,14 @@ body.blue .messageRow.mine .messageBubble {
       8px;
   }
 
+  .composer {
+    min-height: 58px;
+  }
 }
 
-/* =========================
+/* ========================================
    БОЛЬШОЙ ЭКРАН
-========================= */
+======================================== */
 
 @media (min-width: 700px) {
 
@@ -1029,5 +1153,4 @@ body.blue .messageRow.mine .messageBubble {
   .messageBubble {
     max-width: 55%;
   }
-
-  }
+}
