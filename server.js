@@ -1,8 +1,7 @@
 const express = require("express");
 const http = require("http");
-const path = require("path");
-const crypto = require("crypto");
 const fs = require("fs");
+const path = require("path");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const Database = require("better-sqlite3");
@@ -10,83 +9,51 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const { Server } = require("socket.io");
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
+const PORT = process.env.PORT || 10000;
+const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 
-const PORT = Number(process.env.PORT || 3000);
-
-const JWT_SECRET =
-  process.env.JWT_SECRET || crypto.randomBytes(48).toString("hex");
-
-if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
+if (!process.env.JWT_SECRET) {
   console.warn("WARNING: set JWT_SECRET in production.");
 }
 
-/* =========================
-   DATABASE
-========================= */
+fs.mkdirSync(path.join(__dirname, "data"), { recursive: true });
 
-const dataDir = path.join(__dirname, "data");
-fs.mkdirSync(dataDir, { recursive: true });
-
-const db = new Database(path.join(dataDir, "mtalk.db"));
-
+const db = new Database(path.join(__dirname, "data", "mtalk.db"));
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
-db.pragma("busy_timeout = 5000");
 
 db.exec(`
-CREATE TABLE IF NOT EXISTS users(
+CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT NOT NULL COLLATE NOCASE UNIQUE,
-  password_hash TEXT NOT NULL,
+  username TEXT UNIQUE NOT NULL,
+  password TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS conversations(
+CREATE TABLE IF NOT EXISTS chats (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user1 INTEGER NOT NULL,
   user2 INTEGER NOT NULL,
   created_at INTEGER NOT NULL,
-
-  UNIQUE(user1,user2),
-
-  FOREIGN KEY(user1)
-    REFERENCES users(id)
-    ON DELETE CASCADE,
-
-  FOREIGN KEY(user2)
-    REFERENCES users(id)
-    ON DELETE CASCADE
+  UNIQUE(user1, user2),
+  FOREIGN KEY(user1) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY(user2) REFERENCES users(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS messages(
+CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  conversation_id INTEGER NOT NULL,
+  chat_id INTEGER NOT NULL,
   sender_id INTEGER NOT NULL,
-  body TEXT NOT NULL,
+  text TEXT NOT NULL,
   created_at INTEGER NOT NULL,
-
-  FOREIGN KEY(conversation_id)
-    REFERENCES conversations(id)
-    ON DELETE CASCADE,
-
-  FOREIGN KEY(sender_id)
-    REFERENCES users(id)
-    ON DELETE CASCADE
+  FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+  FOREIGN KEY(sender_id) REFERENCES users(id) ON DELETE CASCADE
 );
-
-CREATE INDEX IF NOT EXISTS idx_messages_conv
-ON messages(conversation_id,id);
-
-CREATE INDEX IF NOT EXISTS idx_users_username
-ON users(username);
 `);
 
-/* =========================
-   SECURITY
-========================= */
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
 
 app.disable("x-powered-by");
 
@@ -95,2043 +62,1098 @@ app.use(
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-
         scriptSrc: ["'self'"],
-
-        styleSrc: ["'self'"],
-
-        connectSrc: [
-          "'self'",
-          "ws:",
-          "wss:"
-        ],
-
-        imgSrc: [
-          "'self'",
-          "data:"
-        ],
-
-        fontSrc: ["'self'"],
-
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        connectSrc: ["'self'", "ws:", "wss:"],
+        imgSrc: ["'self'", "data:"],
         objectSrc: ["'none'"],
-
         baseUri: ["'self'"],
-
         frameAncestors: ["'none'"]
       }
     }
   })
 );
 
-app.use(
-  express.json({
-    limit: "32kb"
-  })
-);
+app.use(express.json({ limit: "32kb" }));
 
-/* =========================
-   RATE LIMIT
-========================= */
-
-const authLimiter = rateLimit({
+const authLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
   standardHeaders: true,
   legacyHeaders: false
 });
 
-const apiLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 180,
-  standardHeaders: true,
-  legacyHeaders: false
-});
-
-app.use("/api/", apiLimiter);
-
-/* =========================
-   AUTH
-========================= */
-
-function tokenFor(user) {
-  return jwt.sign(
-    {
-      sub: user.id,
-      username: user.username
-    },
-    JWT_SECRET,
-    {
-      expiresIn: "7d"
-    }
-  );
+function makeToken(id) {
+  return jwt.sign({ id }, JWT_SECRET, { expiresIn: "7d" });
 }
 
 function auth(req, res, next) {
-  const header = req.headers.authorization || "";
+  const h = req.headers.authorization || "";
 
-  if (!header.startsWith("Bearer ")) {
-    return res.status(401).json({
-      error: "Требуется вход"
-    });
+  if (!h.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Не авторизован" });
   }
 
   try {
-    req.user = jwt.verify(
-      header.slice(7),
-      JWT_SECRET
-    );
-
+    req.user = jwt.verify(h.slice(7), JWT_SECRET);
     next();
   } catch {
-    return res.status(401).json({
-      error: "Сессия истекла"
-    });
+    res.status(401).json({ error: "Сессия истекла" });
   }
 }
 
-/* =========================
-   DATABASE HELPERS
-========================= */
-
-function normalizePair(a, b) {
-  return a < b ? [a, b] : [b, a];
-}
-
-function getConversation(a, b) {
-  const [u1, u2] = normalizePair(a, b);
-
+function getChat(id, userId) {
   return db
     .prepare(
-      `
-      SELECT *
-      FROM conversations
-      WHERE user1=? AND user2=?
-      `
+      "SELECT * FROM chats WHERE id=? AND (user1=? OR user2=?)"
     )
-    .get(u1, u2);
+    .get(id, userId, userId);
 }
 
-function createConversation(a, b) {
-  const [u1, u2] = normalizePair(a, b);
+/* Регистрация */
+app.post("/api/register", authLimit, (req, res) => {
+  const username = String(req.body.username || "").trim();
+  const password = String(req.body.password || "");
 
-  const existing = getConversation(a, b);
-
-  if (existing) {
-    return existing;
+  if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+    return res.status(400).json({
+      error: "Логин: 3–20 символов, только буквы, цифры и _"
+    });
   }
 
-  try {
+  if (password.length < 6 || password.length > 100) {
+    return res.status(400).json({
+      error: "Пароль должен быть от 6 до 100 символов"
+    });
+  }
+
+  if (db.prepare("SELECT id FROM users WHERE username=?").get(username)) {
+    return res.status(409).json({
+      error: "Пользователь уже существует"
+    });
+  }
+
+  const result = db
+    .prepare(
+      "INSERT INTO users(username,password,created_at) VALUES(?,?,?)"
+    )
+    .run(
+      username,
+      bcrypt.hashSync(password, 10),
+      Date.now()
+    );
+
+  const user = {
+    id: Number(result.lastInsertRowid),
+    username
+  };
+
+  res.json({
+    token: makeToken(user.id),
+    user
+  });
+});
+
+/* Вход */
+app.post("/api/login", authLimit, (req, res) => {
+  const username = String(req.body.username || "").trim();
+  const password = String(req.body.password || "");
+
+  const user = db
+    .prepare("SELECT * FROM users WHERE username=?")
+    .get(username);
+
+  if (!user || !bcrypt.compareSync(password, user.password)) {
+    return res.status(401).json({
+      error: "Неверный логин или пароль"
+    });
+  }
+
+  res.json({
+    token: makeToken(user.id),
+    user: {
+      id: user.id,
+      username: user.username
+    }
+  });
+});
+
+/* Текущий пользователь */
+app.get("/api/me", auth, (req, res) => {
+  const user = db
+    .prepare("SELECT id,username FROM users WHERE id=?")
+    .get(req.user.id);
+
+  if (!user) {
+    return res.status(404).json({
+      error: "Пользователь не найден"
+    });
+  }
+
+  res.json(user);
+});
+
+/* Поиск пользователей */
+app.get("/api/users", auth, (req, res) => {
+  const q = String(req.query.q || "").trim();
+
+  if (!q) return res.json([]);
+
+  const users = db
+    .prepare(
+      `SELECT id,username
+       FROM users
+       WHERE username LIKE ? AND id<>?
+       ORDER BY username
+       LIMIT 20`
+    )
+    .all("%" + q + "%", req.user.id);
+
+  res.json(users);
+});
+
+/* Список чатов */
+app.get("/api/chats", auth, (req, res) => {
+  const chats = db
+    .prepare(
+      `SELECT
+        c.id,
+        c.created_at,
+        u.id AS user_id,
+        u.username,
+        (
+          SELECT text
+          FROM messages m
+          WHERE m.chat_id=c.id
+          ORDER BY m.id DESC
+          LIMIT 1
+        ) AS last_text,
+        (
+          SELECT created_at
+          FROM messages m
+          WHERE m.chat_id=c.id
+          ORDER BY m.id DESC
+          LIMIT 1
+        ) AS last_time
+      FROM chats c
+      JOIN users u
+        ON u.id=CASE
+          WHEN c.user1=? THEN c.user2
+          ELSE c.user1
+        END
+      WHERE c.user1=? OR c.user2=?
+      ORDER BY COALESCE(last_time,c.created_at) DESC`
+    )
+    .all(req.user.id, req.user.id, req.user.id);
+
+  res.json(chats);
+});
+
+/* Создать чат */
+app.post("/api/chats", auth, (req, res) => {
+  const other = Number(req.body.userId);
+
+  const user = db
+    .prepare("SELECT id,username FROM users WHERE id=?")
+    .get(other);
+
+  if (!user || other === req.user.id) {
+    return res.status(400).json({
+      error: "Неверный пользователь"
+    });
+  }
+
+  const a = Math.min(req.user.id, other);
+  const b = Math.max(req.user.id, other);
+
+  let chat = db
+    .prepare("SELECT * FROM chats WHERE user1=? AND user2=?")
+    .get(a, b);
+
+  if (!chat) {
     const result = db
       .prepare(
-        `
-        INSERT INTO conversations
-        (user1,user2,created_at)
-        VALUES(?,?,?)
-        `
+        "INSERT INTO chats(user1,user2,created_at) VALUES(?,?,?)"
       )
-      .run(
-        u1,
-        u2,
-        Date.now()
-      );
+      .run(a, b, Date.now());
 
-    return db
-      .prepare(
-        `
-        SELECT *
-        FROM conversations
-        WHERE id=?
-        `
-      )
-      .get(result.lastInsertRowid);
-  } catch {
-    return getConversation(a, b);
+    chat = {
+      id: Number(result.lastInsertRowid)
+    };
   }
-}
 
-function userById(id) {
-  return db
+  res.json({
+    id: chat.id,
+    user
+  });
+});
+
+/* Сообщения */
+app.get("/api/chats/:id/messages", auth, (req, res) => {
+  const id = Number(req.params.id);
+
+  if (!getChat(id, req.user.id)) {
+    return res.status(404).json({
+      error: "Чат не найден"
+    });
+  }
+
+  const messages = db
     .prepare(
-      `
-      SELECT id,username,created_at
-      FROM users
-      WHERE id=?
-      `
+      `SELECT
+        m.id,
+        m.text,
+        m.created_at,
+        m.sender_id,
+        u.username
+       FROM messages m
+       JOIN users u ON u.id=m.sender_id
+       WHERE m.chat_id=?
+       ORDER BY m.id ASC
+       LIMIT 200`
     )
-    .get(id);
-}
+    .all(id);
 
-function member(conversation, userId) {
-  return (
-    conversation &&
-    (
-      conversation.user1 === userId ||
-      conversation.user2 === userId
-    )
-  );
-}
+  res.json(messages);
+});
 
-/* =========================
-   REGISTER
-========================= */
+/* ================= UI ================= */
 
-app.post(
-  "/api/register",
-  authLimiter,
-  async (req, res) => {
-
-    const username =
-      String(req.body.username || "").trim();
-
-    const password =
-      String(req.body.password || "");
-
-    if (
-      !/^[A-Za-z0-9_А-Яа-яЁё-]{3,20}$/.test(
-        username
-      )
-    ) {
-      return res.status(400).json({
-        error:
-          "Ник: 3–20 символов; буквы, цифры, _ или -"
-      });
-    }
-
-    if (
-      password.length < 6 ||
-      password.length > 128
-    ) {
-      return res.status(400).json({
-        error:
-          "Пароль должен быть от 6 до 128 символов"
-      });
-    }
-
-    const exists = db
-      .prepare(
-        "SELECT id FROM users WHERE username=?"
-      )
-      .get(username);
-
-    if (exists) {
-      return res.status(409).json({
-        error: "Такой ник уже занят"
-      });
-    }
-
-    try {
-
-      const passwordHash =
-        await bcrypt.hash(password, 12);
-
-      const result = db
-        .prepare(
-          `
-          INSERT INTO users
-          (username,password_hash,created_at)
-          VALUES(?,?,?)
-          `
-        )
-        .run(
-          username,
-          passwordHash,
-          Date.now()
-        );
-
-      const user =
-        userById(result.lastInsertRowid);
-
-      return res.status(201).json({
-        token: tokenFor(user),
-        user
-      });
-
-    } catch (error) {
-
-      if (
-        String(error.message)
-          .includes("UNIQUE")
-      ) {
-        return res.status(409).json({
-          error: "Такой ник уже занят"
-        });
-      }
-
-      console.error(
-        "Register error:",
-        error
-      );
-
-      return res.status(500).json({
-        error:
-          "Не удалось создать аккаунт"
-      });
-    }
-  }
-);
-
-/* =========================
-   LOGIN
-========================= */
-
-app.post(
-  "/api/login",
-  authLimiter,
-  async (req, res) => {
-
-    const username =
-      String(req.body.username || "").trim();
-
-    const password =
-      String(req.body.password || "");
-
-    const user = db
-      .prepare(
-        "SELECT * FROM users WHERE username=?"
-      )
-      .get(username);
-
-    if (
-      !user ||
-      !(await bcrypt.compare(
-        password,
-        user.password_hash
-      ))
-    ) {
-      return res.status(401).json({
-        error:
-          "Неверный ник или пароль"
-      });
-    }
-
-    return res.json({
-      token: tokenFor(user),
-      user: userById(user.id)
-    });
-  }
-);
-
-/* =========================
-   CURRENT USER
-========================= */
-
-app.get(
-  "/api/me",
-  auth,
-  (req, res) => {
-
-    const user =
-      userById(req.user.sub);
-
-    if (!user) {
-      return res.status(401).json({
-        error:
-          "Пользователь не найден"
-      });
-    }
-
-    res.json({
-      user
-    });
-  }
-);
-
-/* =========================
-   USER SEARCH
-========================= */
-
-app.get(
-  "/api/users",
-  auth,
-  (req, res) => {
-
-    const q =
-      String(req.query.q || "").trim();
-
-    if (!q) {
-      return res.json([]);
-    }
-
-    const safe =
-      q.replace(/[\\%_]/g, "\\$&");
-
-    const users =
-      db.prepare(
-        `
-        SELECT id,username
-        FROM users
-        WHERE username LIKE ?
-        ESCAPE '\\'
-        AND id<>?
-        ORDER BY username
-        LIMIT 20
-        `
-      ).all(
-        "%" + safe + "%",
-        req.user.sub
-      );
-
-    res.json(users);
-  }
-);
-
-/* =========================
-   CHAT LIST
-========================= */
-
-app.get(
-  "/api/chats",
-  auth,
-  (req, res) => {
-
-    const rows =
-      db.prepare(
-        `
-        SELECT
-          c.id,
-          c.user1,
-          c.user2,
-
-          CASE
-            WHEN c.user1=?
-            THEN u2.username
-            ELSE u1.username
-          END AS username,
-
-          (
-            SELECT body
-            FROM messages m
-            WHERE m.conversation_id=c.id
-            ORDER BY m.id DESC
-            LIMIT 1
-          ) AS last_message,
-
-          (
-            SELECT created_at
-            FROM messages m
-            WHERE m.conversation_id=c.id
-            ORDER BY m.id DESC
-            LIMIT 1
-          ) AS last_time
-
-        FROM conversations c
-
-        JOIN users u1
-          ON u1.id=c.user1
-
-        JOIN users u2
-          ON u2.id=c.user2
-
-        WHERE c.user1=?
-           OR c.user2=?
-
-        ORDER BY
-          COALESCE(
-            last_time,
-            c.created_at
-          ) DESC
-        `
-      ).all(
-        req.user.sub,
-        req.user.sub,
-        req.user.sub
-      );
-
-    res.json(rows);
-  }
-);
-
-/* =========================
-   CREATE CHAT
-========================= */
-
-app.post(
-  "/api/chats",
-  auth,
-  (req, res) => {
-
-    const other =
-      Number(req.body.userId);
-
-    if (
-      !Number.isInteger(other) ||
-      other === req.user.sub
-    ) {
-      return res.status(400).json({
-        error:
-          "Неверный пользователь"
-      });
-    }
-
-    const user =
-      userById(other);
-
-    if (!user) {
-      return res.status(404).json({
-        error:
-          "Пользователь не найден"
-      });
-    }
-
-    const conversation =
-      createConversation(
-        req.user.sub,
-        other
-      );
-
-    res.json({
-      id: conversation.id,
-      user
-    });
-  }
-);
-
-/* =========================
-   MESSAGES
-========================= */
-
-app.get(
-  "/api/chats/:id/messages",
-  auth,
-  (req, res) => {
-
-    const chatId =
-      Number(req.params.id);
-
-    if (!Number.isInteger(chatId)) {
-      return res.status(400).json({
-        error: "Неверный чат"
-      });
-    }
-
-    const conversation =
-      db.prepare(
-        "SELECT * FROM conversations WHERE id=?"
-      ).get(chatId);
-
-    if (
-      !member(
-        conversation,
-        req.user.sub
-      )
-    ) {
-      return res.status(403).json({
-        error: "Нет доступа"
-      });
-    }
-
-    const messages =
-      db.prepare(
-        `
-        SELECT
-          m.id,
-          m.body,
-          m.created_at,
-          m.sender_id,
-          u.username
-
-        FROM messages m
-
-        JOIN users u
-          ON u.id=m.sender_id
-
-        WHERE m.conversation_id=?
-
-        ORDER BY m.id DESC
-
-        LIMIT 100
-        `
-      )
-      .all(conversation.id)
-      .reverse();
-
-    res.json(messages);
-  }
-);
-
-/* =========================
-   FRONTEND
-========================= */
-
-const INDEX_HTML = `<!doctype html>
+const page = `<!doctype html>
 <html lang="ru">
-
 <head>
-
-<meta charset="UTF-8">
-
-<meta
-  name="viewport"
-  content="width=device-width,initial-scale=1"
->
-
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>M-Talk</title>
 
-<link
-  rel="stylesheet"
-  href="/style.css"
->
+<style>
+*{box-sizing:border-box}
 
+body{
+  margin:0;
+  font-family:Arial,sans-serif;
+  background:#e9eef5;
+  color:#17212b
+}
+
+button,input{
+  font:inherit
+}
+
+button{
+  cursor:pointer;
+  border:0;
+  border-radius:10px;
+  padding:10px 14px;
+  background:#2aabee;
+  color:white
+}
+
+.hidden{
+  display:none!important
+}
+
+.auth{
+  min-height:100vh;
+  display:grid;
+  place-items:center;
+  padding:20px
+}
+
+.card{
+  width:min(400px,100%);
+  background:white;
+  border-radius:18px;
+  padding:25px;
+  box-shadow:0 8px 30px #0002
+}
+
+.card h1{
+  margin-top:0
+}
+
+.card input{
+  width:100%;
+  padding:12px;
+  margin:6px 0;
+  border:1px solid #ccd5df;
+  border-radius:10px
+}
+
+.error{
+  color:#d33;
+  min-height:20px;
+  margin-top:8px
+}
+
+.switch{
+  margin-top:15px;
+  text-align:center;
+  color:#64748b
+}
+
+.switch a{
+  color:#168acd;
+  cursor:pointer
+}
+
+.app{
+  height:100vh;
+  display:flex
+}
+
+.sidebar{
+  width:320px;
+  background:white;
+  border-right:1px solid #ddd;
+  display:flex;
+  flex-direction:column
+}
+
+.top{
+  padding:16px;
+  border-bottom:1px solid #eee;
+  font-weight:bold;
+  font-size:20px
+}
+
+.search{
+  padding:10px;
+  position:relative
+}
+
+.search input{
+  width:100%;
+  padding:11px;
+  border:1px solid #ddd;
+  border-radius:10px
+}
+
+.list{
+  overflow:auto;
+  flex:1
+}
+
+.chatitem{
+  padding:13px 16px;
+  border-bottom:1px solid #f0f0f0;
+  cursor:pointer
+}
+
+.chatitem:hover,
+.chatitem.active{
+  background:#eef7ff
+}
+
+.name{
+  font-weight:bold
+}
+
+.last{
+  font-size:13px;
+  color:#718096;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  margin-top:4px
+}
+
+.main{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  min-width:0
+}
+
+.head{
+  background:white;
+  padding:14px 18px;
+  border-bottom:1px solid #ddd;
+  font-weight:bold
+}
+
+.messages{
+  flex:1;
+  overflow:auto;
+  padding:18px;
+  display:flex;
+  flex-direction:column;
+  gap:7px
+}
+
+.msg{
+  max-width:min(70%,500px);
+  padding:9px 12px;
+  border-radius:14px;
+  background:white;
+  align-self:flex-start;
+  word-break:break-word
+}
+
+.msg.mine{
+  background:#cfeeff;
+  align-self:flex-end
+}
+
+.time{
+  font-size:10px;
+  color:#718096;
+  margin-top:3px;
+  text-align:right
+}
+
+.send{
+  display:flex;
+  gap:8px;
+  background:white;
+  padding:10px
+}
+
+.send input{
+  flex:1;
+  padding:12px;
+  border:1px solid #ddd;
+  border-radius:12px
+}
+
+.empty{
+  margin:auto;
+  color:#718096;
+  text-align:center
+}
+
+.results{
+  position:absolute;
+  left:10px;
+  right:10px;
+  top:58px;
+  background:white;
+  border:1px solid #ddd;
+  border-radius:10px;
+  z-index:3
+}
+
+.result{
+  padding:10px;
+  cursor:pointer
+}
+
+.result:hover{
+  background:#eee
+}
+
+.back{
+  display:none;
+  margin-right:8px;
+  background:#eee;
+  color:#222;
+  padding:5px 9px
+}
+
+@media(max-width:700px){
+
+  .sidebar{
+    width:100%
+  }
+
+  .main{
+    display:none
+  }
+
+  .app.chat-open .sidebar{
+    display:none
+  }
+
+  .app.chat-open .main{
+    display:flex
+  }
+
+  .back{
+    display:inline-block
+  }
+
+  .msg{
+    max-width:85%
+  }
+}
+</style>
 </head>
 
 <body>
 
 <div id="auth" class="auth">
+  <div class="card">
 
-<div class="authbox">
+    <h1>💬 M-Talk</h1>
 
-<div class="logo">
-M<span>-</span>Talk
+    <div id="authTitle">Вход</div>
+
+    <input
+      id="login"
+      placeholder="Логин"
+      autocomplete="username"
+    >
+
+    <input
+      id="pass"
+      type="password"
+      placeholder="Пароль"
+      autocomplete="current-password"
+    >
+
+    <button
+      id="authBtn"
+      style="width:100%;margin-top:8px"
+    >
+      Войти
+    </button>
+
+    <div id="authErr" class="error"></div>
+
+    <div class="switch">
+      <span id="switchText">Нет аккаунта?</span>
+      <a id="switch">Регистрация</a>
+    </div>
+
+  </div>
 </div>
 
-<div class="muted">
-Безопасный интернет-мессенджер
-</div>
+<div id="app" class="app hidden">
 
-<div class="tabs">
+  <aside class="sidebar">
 
-<button
-  id="lt"
-  class="active"
->
-Войти
-</button>
+    <div class="top">
+      💬 M-Talk
+    </div>
 
-<button id="rt">
-Регистрация
-</button>
+    <div class="search">
 
-</div>
+      <input
+        id="search"
+        placeholder="Найти пользователя"
+      >
 
-<input
-  id="un"
-  placeholder="Ник"
-  maxlength="20"
-  autocomplete="username"
->
+      <div id="results" class="results hidden"></div>
 
-<input
-  id="pw"
-  type="password"
-  placeholder="Пароль"
-  maxlength="128"
-  autocomplete="current-password"
->
+    </div>
 
-<button id="ab">
-Войти
-</button>
+    <div id="chats" class="list"></div>
 
-<div id="err"></div>
+  </aside>
 
-</div>
+  <main class="main">
 
-</div>
+    <div class="head">
+      <button class="back" id="back">←</button>
+      <span id="chatTitle">Выберите чат</span>
+    </div>
 
+    <div id="messages" class="messages">
+      <div class="empty">
+        Выберите пользователя слева
+      </div>
+    </div>
 
-<div id="app" class="hidden">
+    <div class="send">
 
-<header>
+      <input
+        id="message"
+        placeholder="Сообщение..."
+        disabled
+      >
 
-<div class="brand">
-M<span>-</span>Talk
-</div>
+      <button id="send" disabled>
+        ➤
+      </button>
 
-<div
-  class="me"
-  id="me"
-></div>
+    </div>
 
-</header>
-
-
-<div class="layout">
-
-<aside>
-
-<div class="search">
-
-<input
-  id="search"
-  placeholder="🔎  Поиск"
->
-
-</div>
-
-<div id="results"></div>
-
-<div class="section">
-Чаты
-</div>
-
-<div id="chats"></div>
-
-</aside>
-
-
-<section class="chat">
-
-<div
-  id="empty"
-  class="empty"
->
-
-<div>💬</div>
-
-<b>
-Выберите чат
-</b>
-
-<span>
-Найдите пользователя через поиск
-</span>
+  </main>
 
 </div>
 
+<script src="/socket.io/socket.io.js"></script>
 
-<div
-  id="chatbox"
-  class="hidden"
->
+<script>
+const $ = id => document.getElementById(id);
 
-<div class="chathead">
-
-<div
-  class="avatar"
-  id="avatar"
->
-M
-</div>
-
-<div>
-
-<b id="ctitle"></b>
-
-<small id="cstatus">
-был(а) недавно
-</small>
-
-</div>
-
-</div>
-
-
-<div id="msgs"></div>
-
-
-<form id="form">
-
-<input
-  id="body"
-  autocomplete="off"
-  maxlength="4000"
-  placeholder="Сообщение"
->
-
-<button type="submit">
-➤
-</button>
-
-</form>
-
-</div>
-
-</section>
-
-</div>
-
-</div>
-
-
-<script
-  src="/socket.io/socket.io.js"
-></script>
-
-<script
-  src="/app.js"
-></script>
-
-</body>
-
-</html>`;
-
-
-/* =========================
-   CSS
-========================= */
-
-const STYLE_CSS = `
-
-*{
-box-sizing:border-box
-}
-
-body{
-margin:0;
-font-family:
-Arial,
-system-ui,
-sans-serif;
-background:#d9e5ef;
-color:#17212b
-}
-
-button,
-input{
-font:inherit
-}
-
-.hidden{
-display:none!important
-}
-
-.auth{
-min-height:100vh;
-display:grid;
-place-items:center;
-background:
-linear-gradient(
-135deg,
-#d9e5ef,
-#eef5f9
-)
-}
-
-.authbox{
-width:min(390px,92%);
-background:#fff;
-padding:30px;
-border-radius:18px;
-box-shadow:
-0 12px 45px #0002
-}
-
-.logo{
-font-size:40px;
-font-weight:800;
-text-align:center
-}
-
-.logo span,
-.brand span{
-color:#3390ec
-}
-
-.muted{
-color:#8493a2;
-text-align:center;
-margin:
-4px 0 24px
-}
-
-.tabs{
-display:flex;
-background:#edf2f6;
-border-radius:10px;
-padding:3px;
-margin-bottom:14px
-}
-
-.tabs button{
-width:50%;
-border:0;
-background:transparent;
-padding:10px;
-border-radius:8px;
-color:#71808e
-}
-
-.tabs .active{
-background:#fff;
-color:#2387df;
-box-shadow:
-0 1px 5px #0001
-}
-
-.authbox input{
-display:block;
-width:100%;
-padding:13px;
-margin:9px 0;
-border:
-1px solid #d5dfe8;
-border-radius:10px;
-outline:none
-}
-
-.authbox>#ab{
-width:100%;
-border:0;
-padding:13px;
-border-radius:10px;
-background:#3390ec;
-color:#fff;
-font-weight:bold;
-margin-top:5px
-}
-
-.authbox #err{
-text-align:center;
-color:#e04f5f;
-min-height:22px;
-margin-top:10px
-}
-
-#app{
-height:100vh;
-background:#fff
-}
-
-header{
-height:56px;
-background:#fff;
-border-bottom:
-1px solid #dfe6ec;
-display:flex;
-align-items:center;
-justify-content:space-between;
-padding:0 18px
-}
-
-.brand{
-font-weight:800;
-font-size:24px
-}
-
-.me{
-color:#657483
-}
-
-.layout{
-height:
-calc(100vh - 56px);
-display:flex;
-max-width:1200px;
-margin:auto
-}
-
-aside{
-width:350px;
-border-right:
-1px solid #dfe6ec;
-overflow:auto;
-background:#fff
-}
-
-.search{
-padding:10px
-}
-
-.search input{
-width:100%;
-padding:
-10px 13px;
-border:0;
-background:#f1f3f5;
-border-radius:10px;
-outline:0
-}
-
-.section{
-font-size:12px;
-text-transform:uppercase;
-color:#8a98a5;
-padding:
-12px 15px 7px
-}
-
-.person,
-.chatrow{
-display:flex;
-align-items:center;
-gap:11px;
-padding:
-10px 14px;
-cursor:pointer
-}
-
-.person:hover,
-.chatrow:hover{
-background:#f1f3f5
-}
-
-.chatrow.active{
-background:#e7f2fd
-}
-
-.avatar{
-width:45px;
-height:45px;
-border-radius:50%;
-background:#55a7e8;
-color:#fff;
-display:grid;
-place-items:center;
-font-weight:bold;
-flex:none
-}
-
-.chatrow .txt{
-min-width:0
-}
-
-.chatrow b{
-display:block
-}
-
-.chatrow small{
-display:block;
-color:#7b8995;
-white-space:nowrap;
-overflow:hidden;
-text-overflow:ellipsis;
-margin-top:3px
-}
-
-.chat{
-flex:1;
-min-width:0;
-background:#e6ebef;
-position:relative
-}
-
-.empty{
-height:100%;
-display:flex;
-flex-direction:column;
-align-items:center;
-justify-content:center;
-color:#6d7b87;
-gap:8px
-}
-
-.empty div{
-font-size:55px
-}
-
-.chathead{
-height:60px;
-background:#fff;
-display:flex;
-align-items:center;
-gap:10px;
-padding:
-7px 15px;
-border-bottom:
-1px solid #dce3e8
-}
-
-.chathead .avatar{
-width:42px;
-height:42px
-}
-
-.chathead small{
-display:block;
-color:#87939e;
-font-size:12px;
-margin-top:2px
-}
-
-.chathead b{
-font-size:15px
-}
-
-#msgs{
-height:
-calc(100% - 112px);
-overflow:auto;
-padding:18px;
-display:flex;
-flex-direction:column;
-gap:4px
-}
-
-.bubble{
-max-width:70%;
-padding:
-7px 10px;
-border-radius:10px;
-background:#fff;
-box-shadow:
-0 1px 1px #0001;
-align-self:flex-start
-}
-
-.bubble.mine{
-background:#e1ffc7;
-align-self:flex-end
-}
-
-.bubble p{
-margin:0;
-white-space:pre-wrap;
-overflow-wrap:anywhere
-}
-
-.bubble small{
-font-size:10px;
-color:#7c898f;
-float:right;
-margin:
-5px 0 0 9px
-}
-
-form{
-height:52px;
-background:#fff;
-display:flex;
-gap:8px;
-padding:7px;
-border-top:
-1px solid #d9e1e7
-}
-
-form input{
-flex:1;
-border:0;
-background:#f0f2f4;
-border-radius:10px;
-padding:
-10px 13px;
-outline:0
-}
-
-form button{
-border:0;
-background:#3390ec;
-color:white;
-border-radius:10px;
-width:46px;
-font-size:20px
-}
-
-@media(max-width:700px){
-
-aside{
-width:100%
-}
-
-.chat{
-display:none
-}
-
-.layout.chatopen aside{
-display:none
-}
-
-.layout.chatopen .chat{
-display:block
-}
-
-.me{
-font-size:12px
-}
-
-}
-
-`;
-
-
-/* =========================
-   FRONTEND JS
-========================= */
-
-const APP_JS = `
-
-let token =
-localStorage.getItem("mtalk_token");
-
+let isReg = false;
+let token = localStorage.getItem("mtoken");
 let me = null;
-
+let current = null;
 let socket = null;
 
-let current = null;
-
-let chats = [];
-
-
-const $ =
-x => document.getElementById(x);
-
-
-function esc(value){
-
-return String(value)
-.replace(
-/[&<>"']/g,
-char => ({
-"&":"&amp;",
-"<":"&lt;",
-">":"&gt;",
-"\\\"":"&quot;",
-"'":"&#039;"
-}[char])
-);
-
+function esc(s){
+  return String(s).replace(
+    /[&<>"']/g,
+    c => ({
+      "&":"&amp;",
+      "<":"&lt;",
+      ">":"&gt;",
+      '"':"&quot;",
+      "'":"&#39;"
+    }[c])
+  );
 }
 
+async function api(url,opt={}){
+  opt.headers = Object.assign(
+    {"Content-Type":"application/json"},
+    opt.headers || {}
+  );
 
-/* =========================
-   API
-========================= */
+  if(token){
+    opt.headers.Authorization = "Bearer " + token;
+  }
 
-async function api(
-url,
-options={}
-){
+  const r = await fetch(url,opt);
 
-options.headers = {
-...(options.headers || {}),
+  const d = await r.json().catch(
+    () => ({error:"Ошибка сервера"})
+  );
 
-Authorization:
-"Bearer " + token,
+  if(!r.ok){
+    throw Error(d.error || "Ошибка");
+  }
 
-"Content-Type":
-"application/json"
+  return d;
+}
+
+$("switch").onclick = () => {
+
+  isReg = !isReg;
+
+  $("authTitle").textContent =
+    isReg ? "Регистрация" : "Вход";
+
+  $("authBtn").textContent =
+    isReg ? "Создать аккаунт" : "Войти";
+
+  $("switch").textContent =
+    isReg ? "Вход" : "Регистрация";
+
+  $("switchText").textContent =
+    isReg ? "Уже есть аккаунт?" : "Нет аккаунта?";
+
+  $("authErr").textContent = "";
 };
 
-const response =
-await fetch(
-url,
-options
-);
+$("authBtn").onclick = async () => {
 
-const data =
-await response
-.json()
-.catch(
-() => ({})
-);
+  try{
 
-if(!response.ok){
+    const username = $("login").value.trim();
+    const password = $("pass").value;
 
-throw new Error(
-data.error ||
-"Ошибка запроса"
-);
+    const d = await api(
+      isReg ? "/api/register" : "/api/login",
+      {
+        method:"POST",
+        body:JSON.stringify({
+          username,
+          password
+        })
+      }
+    );
 
-}
+    token = d.token;
 
-return data;
+    localStorage.setItem("mtoken",token);
 
-}
+    start();
 
+  }catch(e){
 
-/* =========================
-   AUTH MODE
-========================= */
+    $("authErr").textContent = e.message;
 
-let mode = "login";
-
-
-$("lt").onclick =
-() => setMode("login");
-
-$("rt").onclick =
-() => setMode("register");
-
-
-function setMode(newMode){
-
-mode = newMode;
-
-$("lt")
-.classList
-.toggle(
-"active",
-mode === "login"
-);
-
-$("rt")
-.classList
-.toggle(
-"active",
-mode === "register"
-);
-
-$("ab").textContent =
-mode === "login"
-? "Войти"
-: "Создать аккаунт";
-
-$("pw").autocomplete =
-mode === "login"
-? "current-password"
-: "new-password";
-
-$("err").textContent = "";
-
-}
-
-
-/* =========================
-   LOGIN / REGISTER
-========================= */
-
-$("ab").onclick =
-async () => {
-
-try{
-
-const endpoint =
-mode === "login"
-? "/api/login"
-: "/api/register";
-
-const response =
-await fetch(
-endpoint,
-{
-method:"POST",
-
-headers:{
-"Content-Type":
-"application/json"
-},
-
-body:JSON.stringify({
-username:
-$("un").value.trim(),
-
-password:
-$("pw").value
-})
-}
-);
-
-const data =
-await response
-.json()
-.catch(
-() => ({})
-);
-
-if(!response.ok){
-
-throw new Error(
-data.error ||
-"Ошибка запроса"
-);
-
-}
-
-token =
-data.token;
-
-localStorage.setItem(
-"mtalk_token",
-token
-);
-
-await boot();
-
-}catch(error){
-
-$("err").textContent =
-error.message ||
-"Ошибка сети";
-
-}
-
+  }
 };
 
+$("pass").onkeydown = e => {
+  if(e.key === "Enter"){
+    $("authBtn").click();
+  }
+};
 
-/* =========================
-   START APP
-========================= */
+async function start(){
 
-async function boot(){
+  try{
 
-if(!token){
-return;
+    me = await api("/api/me");
+
+    $("auth").classList.add("hidden");
+    $("app").classList.remove("hidden");
+
+    socket = io({
+      auth:{token}
+    });
+
+    socket.on("message",m => {
+
+      if(current && m.chat_id === current.id){
+        addMsg(m);
+      }
+
+      loadChats();
+
+    });
+
+    await loadChats();
+
+  }catch(e){
+
+    localStorage.removeItem("mtoken");
+    token = null;
+
+  }
 }
-
-try{
-
-const data =
-await api("/api/me");
-
-me =
-data.user;
-
-$("me").textContent =
-"👤 " + me.username;
-
-$("auth")
-.classList
-.add("hidden");
-
-$("app")
-.classList
-.remove("hidden");
-
-
-socket =
-io({
-auth:{
-token
-}
-});
-
-
-socket.on(
-"message",
-message => {
-
-if(
-current &&
-message.conversation_id ===
-current.id
-){
-
-addMsg(message);
-
-}
-
-loadChats();
-
-}
-);
-
-
-await loadChats();
-
-}catch{
-
-localStorage.removeItem(
-"mtalk_token"
-);
-
-token = null;
-
-}
-
-}
-
-
-/* =========================
-   LOAD CHATS
-========================= */
 
 async function loadChats(){
 
-chats =
-await api("/api/chats");
+  const rows = await api("/api/chats");
 
-$("chats").innerHTML =
-chats.map(
-chat => ` +
-"`" + `<div class="chatrow ${
-current &&
-current.id === chat.id
-? "active"
-: ""
-}"
-onclick="openChat(${chat.id})">
+  $("chats").innerHTML =
+    rows.length
+      ? rows.map(c =>
+        '<div class="chatitem ' +
+        (current && current.id === c.id ? "active" : "") +
+        '" data-id="' + c.id + '">' +
 
-<div class="avatar">
-${esc(
-chat.username[0]
-.toUpperCase()
-)}
-</div>
+        '<div class="name">' +
+        esc(c.username) +
+        "</div>" +
 
-<div class="txt">
+        '<div class="last">' +
+        esc(c.last_text || "Нет сообщений") +
+        "</div>" +
 
-<b>
-${esc(chat.username)}
-</b>
+        "</div>"
+      ).join("")
+      : '<div class="empty">Чатов пока нет</div>';
 
-<small>
-${esc(
-chat.last_message ||
-"Новый чат"
-)}
-</small>
-
-</div>
-
-</div>` + "`" + `
-`
-).join("");
-
+  document
+    .querySelectorAll(".chatitem")
+    .forEach(x => {
+      x.onclick = () =>
+        openChat(Number(x.dataset.id));
+    });
 }
 
+async function openChat(id){
 
-/* =========================
-   OPEN CHAT
-========================= */
+  try{
 
-window.openChat =
-async id => {
+    const rows = await api("/api/chats");
 
-const chat =
-chats.find(
-item => item.id === id
-);
+    const c = rows.find(x => x.id === id);
 
-if(!chat){
-return;
+    if(!c) return;
+
+    current = {
+      id:c.id,
+      username:c.username,
+      user_id:c.user_id
+    };
+
+    $("chatTitle").textContent = c.username;
+
+    $("message").disabled = false;
+    $("send").disabled = false;
+
+    $("messages").innerHTML = "";
+
+    const msgs =
+      await api("/api/chats/" + id + "/messages");
+
+    msgs.forEach(addMsg);
+
+    if(socket){
+      socket.emit("joinChat",id);
+    }
+
+    $("app").classList.add("chat-open");
+
+    loadChats();
+
+  }catch(e){
+
+    alert(e.message);
+
+  }
 }
 
-current = {
-id:chat.id,
-username:chat.username
-};
+function addMsg(m){
 
-$("empty")
-.classList
-.add("hidden");
+  const d = document.createElement("div");
 
-$("chatbox")
-.classList
-.remove("hidden");
+  d.className =
+    "msg " +
+    (m.sender_id === me.id ? "mine" : "");
 
-$("ctitle").textContent =
-chat.username;
+  d.innerHTML =
+    esc(m.text) +
+    '<div class="time">' +
+    new Date(m.created_at)
+      .toLocaleTimeString([],{
+        hour:"2-digit",
+        minute:"2-digit"
+      }) +
+    "</div>";
 
-$("avatar").textContent =
-chat.username[0]
-.toUpperCase();
+  $("messages").appendChild(d);
 
-$("msgs").innerHTML = "";
-
-socket.emit(
-"joinChat",
-id
-);
-
-const messages =
-await api(
-"/api/chats/" +
-id +
-"/messages"
-);
-
-messages.forEach(addMsg);
-
-scrollMessages();
-
-await loadChats();
-
-};
-
-
-/* =========================
-   MESSAGE
-========================= */
-
-function addMsg(message){
-
-const element =
-document.createElement("div");
-
-element.className =
-"bubble " +
-(
-message.sender_id === me.id
-? "mine"
-: ""
-);
-
-element.innerHTML = ` +
-"`" + `
-<p>
-${esc(message.body)}
-</p>
-
-<small>
-${new Date(
-message.created_at
-).toLocaleTimeString(
-[],
-{
-hour:"2-digit",
-minute:"2-digit"
-}
-)}
-</small>
-` + "`" + `;
-
-$("msgs")
-.appendChild(
-element
-);
-
-scrollMessages();
-
+  $("messages").scrollTop =
+    $("messages").scrollHeight;
 }
 
+function send(){
 
-function scrollMessages(){
+  const text = $("message").value.trim();
 
-$("msgs").scrollTop =
-$("msgs").scrollHeight;
+  if(!text || !current || !socket) return;
 
+  socket.emit(
+    "sendMessage",
+    {
+      chatId:current.id,
+      text
+    },
+    r => {
+
+      if(r && r.error){
+        alert(r.error);
+      }else{
+        $("message").value = "";
+      }
+
+    }
+  );
 }
 
+$("send").onclick = send;
 
-/* =========================
-   SEND MESSAGE
-========================= */
+$("message").onkeydown = e => {
 
-$("form").onsubmit =
-event => {
-
-event.preventDefault();
-
-const body =
-$("body")
-.value
-.trim();
-
-if(
-body &&
-current &&
-socket &&
-socket.connected
-){
-
-socket.emit(
-"sendMessage",
-{
-chatId:
-current.id,
-
-body
-}
-);
-
-$("body").value = "";
-
-}
+  if(e.key === "Enter"){
+    send();
+  }
 
 };
 
+$("back").onclick = () => {
 
-/* =========================
-   SEARCH
-========================= */
+  $("app").classList.remove("chat-open");
 
-let searchTimer;
+  current = null;
 
-$("search").oninput =
-() => {
-
-clearTimeout(
-searchTimer
-);
-
-searchTimer =
-setTimeout(
-searchUsers,
-250
-);
-
+  $("message").disabled = true;
+  $("send").disabled = true;
 };
 
+let timer;
 
-async function searchUsers(){
+$("search").oninput = () => {
 
-const query =
-$("search")
-.value
-.trim();
+  clearTimeout(timer);
 
-if(!query){
+  timer = setTimeout(async () => {
 
-$("results")
-.innerHTML = "";
+    const q = $("search").value.trim();
 
-return;
+    if(!q){
+      $("results").classList.add("hidden");
+      return;
+    }
 
-}
+    const rows =
+      await api(
+        "/api/users?q=" +
+        encodeURIComponent(q)
+      );
 
-try{
+    $("results").innerHTML =
+      rows.map(u =>
+        '<div class="result" data-user="' +
+        u.id +
+        '">👤 ' +
+        esc(u.username) +
+        "</div>"
+      ).join("") ||
+      '<div class="result">Ничего не найдено</div>';
 
-const users =
-await api(
-"/api/users?q=" +
-encodeURIComponent(query)
-);
+    $("results").classList.remove("hidden");
 
-$("results").innerHTML =
-users.map(
-user => ` +
-"`" + `
-<div
-class="person"
-onclick="startChat(${user.id})"
->
+    document
+      .querySelectorAll(".result[data-user]")
+      .forEach(x => {
 
-<div class="avatar">
-${esc(
-user.username[0]
-.toUpperCase()
-)}
-</div>
+        x.onclick = async () => {
 
-<b>
-${esc(user.username)}
-</b>
+          try{
 
-</div>
-` + "`" + `
-`
-).join("");
+            const c = await api(
+              "/api/chats",
+              {
+                method:"POST",
+                body:JSON.stringify({
+                  userId:Number(x.dataset.user)
+                })
+              }
+            );
 
-}catch{
+            $("search").value = "";
 
-$("results").innerHTML = "";
+            $("results")
+              .classList
+              .add("hidden");
 
-}
+            await loadChats();
 
-}
+            openChat(c.id);
 
+          }catch(e){
 
-/* =========================
-   START CHAT
-========================= */
+            alert(e.message);
 
-window.startChat =
-async userId => {
+          }
 
-const chat =
-await api(
-"/api/chats",
-{
-method:"POST",
+        };
 
-body:JSON.stringify({
-userId
-})
-}
-);
+      });
 
-$("search").value = "";
-
-$("results").innerHTML = "";
-
-await loadChats();
-
-openChat(chat.id);
-
+  },250);
 };
 
+document.onclick = e => {
 
-/* =========================
-   START
-========================= */
+  if(!e.target.closest(".search")){
+    $("results").classList.add("hidden");
+  }
+
+};
 
 if(token){
-
-boot();
-
+  start();
 }
+</script>
 
-`;
+</body>
+</html>`;
 
+app.get("/", (req,res) => {
+  res.type("html").send(page);
+});
 
-/* =========================
-   ROUTES
-========================= */
+/* Socket.IO */
 
-app.get(
-  "/",
-  (req, res) => {
-    res.type("html").send(INDEX_HTML);
+io.use((socket,next) => {
+
+  try{
+
+    const t =
+      socket.handshake.auth &&
+      socket.handshake.auth.token;
+
+    socket.user =
+      jwt.verify(t,JWT_SECRET);
+
+    next();
+
+  }catch{
+
+    next(new Error("Unauthorized"));
+
   }
-);
 
-app.get(
-  "/style.css",
-  (req, res) => {
-    res.type("css").send(STYLE_CSS);
-  }
-);
+});
 
-app.get(
-  "/app.js",
-  (req, res) => {
-    res
-      .type("application/javascript")
-      .send(APP_JS);
-  }
-);
+io.on("connection", socket => {
 
+  socket.on("joinChat", chatId => {
 
-/* =========================
-   SOCKET.IO AUTH
-========================= */
+    if(
+      getChat(
+        Number(chatId),
+        socket.user.id
+      )
+    ){
+      socket.join("chat:" + Number(chatId));
+    }
 
-io.use(
-  (socket, next) => {
+  });
 
-    try {
+  socket.on("sendMessage",(data,cb) => {
 
-      const token =
-        socket.handshake.auth?.token ||
-        "";
+    try{
 
-      socket.user =
-        jwt.verify(
-          token,
-          JWT_SECRET
-        );
+      const chatId = Number(data.chatId);
+      const text = String(data.text || "").trim();
 
-      next();
+      if(!text || text.length > 2000){
+        return cb &&
+          cb({
+            error:"Сообщение пустое или слишком длинное"
+          });
+      }
 
-    } catch {
+      if(!getChat(chatId,socket.user.id)){
+        return cb &&
+          cb({
+            error:"Нет доступа к чату"
+          });
+      }
 
-      next(
-        new Error(
-          "AUTH_FAILED"
+      const time = Date.now();
+
+      const result = db
+        .prepare(
+          `INSERT INTO messages
+           (chat_id,sender_id,text,created_at)
+           VALUES(?,?,?,?)`
         )
-      );
-
-    }
-
-  }
-);
-
-
-/* =========================
-   ONLINE USERS
-========================= */
-
-const online =
-  new Map();
-
-
-/* =========================
-   SOCKET CONNECTION
-========================= */
-
-io.on(
-  "connection",
-  socket => {
-
-    const userId =
-      Number(socket.user.sub);
-
-    if(!online.has(userId)){
-
-      online.set(
-        userId,
-        new Set()
-      );
-
-    }
-
-    online
-      .get(userId)
-      .add(socket.id);
-
-    io.emit(
-      "presence",
-      {
-        userId,
-        online:true
-      }
-    );
-
-
-    /* JOIN CHAT */
-
-    socket.on(
-      "joinChat",
-      chatId => {
-
-        const conversation =
-          db
-          .prepare(
-            `
-            SELECT *
-            FROM conversations
-            WHERE id=?
-            `
-          )
-          .get(
-            Number(chatId)
-          );
-
-        if(
-          member(
-            conversation,
-            userId
-          )
-        ){
-
-          socket.join(
-            "chat:" +
-            conversation.id
-          );
-
-        }
-
-      }
-    );
-
-
-    /* SEND MESSAGE */
-
-    socket.on(
-      "sendMessage",
-      payload => {
-
-        const chatId =
-          Number(
-            payload?.chatId
-          );
-
-        const body =
-          String(
-            payload?.body || ""
-          ).trim();
-
-        if(
-          !body ||
-          body.length > 4000
-        ){
-
-          return;
-
-        }
-
-        const conversation =
-          db
-          .prepare(
-            `
-            SELECT *
-            FROM conversations
-            WHERE id=?
-            `
-          )
-          .get(chatId);
-
-        if(
-          !member(
-            conversation,
-            userId
-          )
-        ){
-
-          return;
-
-        }
-
-        const result =
-          db
-          .prepare(
-            `
-            INSERT INTO messages
-            (
-              conversation_id,
-              sender_id,
-              body,
-              created_at
-            )
-            VALUES(?,?,?,?)
-            `
-          )
-          .run(
-            chatId,
-            userId,
-            body,
-            Date.now()
-          );
-
-
-        const message =
-          db
-          .prepare(
-            `
-            SELECT
-              m.id,
-              m.body,
-              m.created_at,
-              m.sender_id,
-              m.conversation_id,
-              u.username
-
-            FROM messages m
-
-            JOIN users u
-              ON u.id=m.sender_id
-
-            WHERE m.id=?
-            `
-          )
-          .get(
-            result.lastInsertRowid
-          );
-
-
-        io
-          .to("chat:" + chatId)
-          .emit(
-            "message",
-            message
-          );
-
-      }
-    );
-
-
-    /* DISCONNECT */
-
-    socket.on(
-      "disconnect",
-      () => {
-
-        const users =
-          online.get(userId);
-
-        if(!users){
-          return;
-        }
-
-        users.delete(
-          socket.id
+        .run(
+          chatId,
+          socket.user.id,
+          text,
+          time
         );
 
-        if(users.size === 0){
+      const message = {
+        id:Number(result.lastInsertRowid),
+        chat_id:chatId,
+        sender_id:socket.user.id,
+        text,
+        created_at:time
+      };
 
-          online.delete(
-            userId
-          );
+      io
+        .to("chat:" + chatId)
+        .emit("message",message);
 
-          io.emit(
-            "presence",
-            {
-              userId,
-              online:false
-            }
-          );
-
-        }
-
+      if(cb){
+        cb({ok:true});
       }
-    );
 
-  }
-);
+    }catch{
 
+      if(cb){
+        cb({
+          error:"Ошибка отправки"
+        });
+      }
 
-/* =========================
-   START SERVER
-========================= */
+    }
+
+  });
+
+});
 
 server.listen(
   PORT,
   "0.0.0.0",
   () => {
-
     console.log(
-      "M-Talk running on port " +
-      PORT
+      "M-Talk running on port " + PORT
     );
-
   }
 );
