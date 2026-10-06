@@ -3,7 +3,6 @@ let me = null;
 let socket = null;
 let currentChat = null;
 let replyTo = null;
-let touchStartX = 0;
 let currentMessages = [];
 
 const $ = id => document.getElementById(id);
@@ -18,21 +17,25 @@ async function api(url, options = {}) {
     headers.Authorization = "Bearer " + token;
   }
 
-  const r = await fetch(url, {
+  const response = await fetch(url, {
     ...options,
     headers
   });
 
-  const data = await r.json().catch(() => ({}));
+  const data = await response.json().catch(() => ({}));
 
-  if (!r.ok) {
-    throw new Error(data.error || "Ошибка");
+  if (!response.ok) {
+    throw new Error(
+      data.error || "Ошибка сервера"
+    );
   }
 
   return data;
 }
 
-/* AUTH */
+/* =========================
+   АВТОРИЗАЦИЯ
+========================= */
 
 $("showLogin").onclick = () => {
   $("registerBox").hidden = true;
@@ -51,14 +54,18 @@ $("registerBtn").onclick = async () => {
     const data = await api("/api/register", {
       method: "POST",
       body: JSON.stringify({
-        displayName: $("regName").value,
-        username: $("regUser").value,
+        displayName: $("regName").value.trim(),
+        username: $("regUser").value.trim(),
         password: $("regPass").value
       })
     });
 
     token = data.token;
-    localStorage.setItem("mtalk_token", token);
+
+    localStorage.setItem(
+      "mtalk_token",
+      token
+    );
 
     await startApp();
   } catch (e) {
@@ -73,13 +80,17 @@ $("loginBtn").onclick = async () => {
     const data = await api("/api/login", {
       method: "POST",
       body: JSON.stringify({
-        username: $("loginUser").value,
+        username: $("loginUser").value.trim(),
         password: $("loginPass").value
       })
     });
 
     token = data.token;
-    localStorage.setItem("mtalk_token", token);
+
+    localStorage.setItem(
+      "mtalk_token",
+      token
+    );
 
     await startApp();
   } catch (e) {
@@ -87,7 +98,9 @@ $("loginBtn").onclick = async () => {
   }
 };
 
-/* APP */
+/* =========================
+   ЗАПУСК
+========================= */
 
 async function startApp() {
   try {
@@ -97,19 +110,26 @@ async function startApp() {
     $("app").hidden = false;
 
     applyTheme();
-    connectSocket();
-    loadChats();
 
     $("topTitle").textContent =
-      me.display_name || me.username;
+      me.display_name ||
+      me.username;
 
     $("topStatus").textContent =
       "в сети";
 
-  } catch {
+    connectSocket();
+    loadChats();
+
+  } catch (e) {
+    console.error(e);
     logout();
   }
 }
+
+/* =========================
+   SOCKET
+========================= */
 
 function connectSocket() {
   socket = io({
@@ -118,16 +138,27 @@ function connectSocket() {
     }
   });
 
-  socket.on("newMessage", msg => {
+  socket.on("connect", () => {
+    console.log("M-Talk connected");
+  });
+
+  socket.on("newMessage", message => {
     if (
       currentChat &&
-      Number(msg.chat_id) === Number(currentChat.id)
+      Number(message.chat_id) ===
+      Number(currentChat.id)
     ) {
-      currentMessages.push(msg);
+      currentMessages.push(message);
+
       renderMessages();
       scrollBottom();
 
-      markRead();
+      if (
+        Number(message.sender_id) !==
+        Number(me.id)
+      ) {
+        markRead();
+      }
     }
 
     loadChats();
@@ -144,11 +175,6 @@ function connectSocket() {
   });
 
   socket.on("userStatus", data => {
-    updateOnlineStatus(
-      data.userId,
-      data.online
-    );
-
     if (
       currentChat &&
       Number(currentChat.user_id) ===
@@ -156,51 +182,67 @@ function connectSocket() {
     ) {
       $("topStatus").textContent =
         data.online
-          ? "в сети"
+          ? "● в сети"
           : "был(а) недавно";
     }
+
+    loadChats();
   });
 }
 
-/* CHATS */
+/* =========================
+   ЧАТЫ
+========================= */
 
 async function loadChats() {
   try {
-    const chats = await api("/api/chats");
+    const chats =
+      await api("/api/chats");
 
     $("chatList").innerHTML = "";
 
     if (!chats.length) {
       $("chatList").innerHTML = `
-        <div style="padding:40px;text-align:center;color:#8d9aa7">
+        <div style="
+          padding:40px 20px;
+          text-align:center;
+          color:#8d9aa7
+        ">
           🔎 Найдите человека через поиск<br>
           и начните общение
         </div>
       `;
+
       return;
     }
 
     chats.forEach(chat => {
-      const item = document.createElement("div");
+      const item =
+        document.createElement("div");
+
       item.className = "chatItem";
 
+      const name =
+        chat.display_name ||
+        chat.username;
+
       const letter =
-        (chat.display_name ||
-          chat.username)[0].toUpperCase();
+        getInitials(name);
 
       item.innerHTML = `
-        <div class="avatar">${escapeHtml(letter)}</div>
+        <div class="avatar">
+          ${escapeHtml(letter)}
+        </div>
 
         <div class="chatInfo">
           <b>
-            ${escapeHtml(
-              chat.display_name ||
-              chat.username
-            )}
+            ${escapeHtml(name)}
           </b>
 
           <span class="${
-            chat.online ? "online" : ""
+            chat.online
+              ? "online"
+              : ""
           }">
             ${
               chat.online
@@ -217,14 +259,18 @@ async function loadChats() {
       item.onclick = () =>
         openChat(chat);
 
-      $("chatList").appendChild(item);
+      $("chatList")
+        .appendChild(item);
     });
+
   } catch (e) {
     console.error(e);
   }
 }
 
-/* SEARCH */
+/* =========================
+   ПОИСК
+========================= */
 
 $("searchBtn").onclick = () => {
   $("searchPanel").hidden =
@@ -235,22 +281,25 @@ $("searchBtn").onclick = () => {
   }
 };
 
-let searchTimer;
+let searchTimer = null;
 
 $("searchInput").oninput = () => {
   clearTimeout(searchTimer);
 
-  searchTimer = setTimeout(
-    searchUsers,
-    250
-  );
+  searchTimer =
+    setTimeout(
+      searchUsers,
+      250
+    );
 };
 
 async function searchUsers() {
-  const q =
-    $("searchInput").value.trim();
+  const query =
+    $("searchInput")
+      .value
+      .trim();
 
-  if (!q) {
+  if (!query) {
     $("searchResults").innerHTML = "";
     return;
   }
@@ -259,16 +308,20 @@ async function searchUsers() {
     const users =
       await api(
         "/api/users?q=" +
-        encodeURIComponent(q)
+        encodeURIComponent(query)
       );
 
     $("searchResults").innerHTML = "";
 
     if (!users.length) {
-      $("searchResults").innerHTML =
-        `<div style="padding:18px;color:#8d9aa7">
+      $("searchResults").innerHTML = `
+        <div style="
+          padding:18px;
+          color:#8d9aa7
+        ">
           Никого не найдено
-        </div>`;
+        </div>
+      `;
 
       return;
     }
@@ -277,27 +330,29 @@ async function searchUsers() {
       const item =
         document.createElement("div");
 
-      item.className = "userResult";
+      item.className =
+        "userResult";
+
+      const name =
+        user.display_name ||
+        user.username;
 
       item.innerHTML = `
         <div class="avatar">
           ${escapeHtml(
-            (user.display_name ||
-              user.username)[0]
-              .toUpperCase()
+            getInitials(name)
           )}
         </div>
 
         <div class="userInfo">
           <b>
-            ${escapeHtml(
-              user.display_name ||
-              user.username
-            )}
+            ${escapeHtml(name)}
           </b>
 
           <span class="${
-            user.online ? "online" : ""
+            user.online
+              ? "online"
+              : ""
           }">
             ${
               user.online
@@ -314,12 +369,18 @@ async function searchUsers() {
       item.onclick = () =>
         startChat(user);
 
-      $("searchResults").appendChild(item);
+      $("searchResults")
+        .appendChild(item);
     });
+
   } catch (e) {
     console.error(e);
   }
 }
+
+/* =========================
+   СОЗДАТЬ / ОТКРЫТЬ ЧАТ
+========================= */
 
 async function startChat(user) {
   try {
@@ -343,12 +404,11 @@ async function startChat(user) {
     $("searchPanel").hidden = true;
     $("searchInput").value = "";
     $("searchResults").innerHTML = "";
+
   } catch (e) {
     alert(e.message);
   }
 }
-
-/* OPEN CHAT */
 
 async function openChat(chat) {
   currentChat = chat;
@@ -363,7 +423,7 @@ async function openChat(chat) {
 
   $("topStatus").textContent =
     chat.online
-      ? "в сети"
+      ? "● в сети"
       : "был(а) недавно";
 
   socket.emit(
@@ -384,7 +444,8 @@ $("backBtn").onclick = () => {
   $("backBtn").hidden = true;
 
   $("topTitle").textContent =
-    me.display_name || me.username;
+    me.display_name ||
+    me.username;
 
   $("topStatus").textContent =
     "в сети";
@@ -392,9 +453,13 @@ $("backBtn").onclick = () => {
   loadChats();
 };
 
-/* MESSAGES */
+/* =========================
+   СООБЩЕНИЯ
+========================= */
 
-async function loadMessages(scroll = true) {
+async function loadMessages(
+  shouldScroll = true
+) {
   if (!currentChat) return;
 
   try {
@@ -405,9 +470,10 @@ async function loadMessages(scroll = true) {
 
     renderMessages();
 
-    if (scroll) {
+    if (shouldScroll) {
       scrollBottom();
     }
+
   } catch (e) {
     console.error(e);
   }
@@ -416,22 +482,21 @@ async function loadMessages(scroll = true) {
 function renderMessages() {
   $("messages").innerHTML = "";
 
-  currentMessages.forEach(msg => {
-    const el =
+  currentMessages.forEach(message => {
+    const element =
       document.createElement("div");
 
-    el.className =
-      "message " +
-      (
-        Number(msg.sender_id) ===
-        Number(me.id)
-          ? "mine"
-          : "other"
-      );
+    const mine =
+      Number(message.sender_id) ===
+      Number(me.id);
 
-    const date =
+    element.className =
+      "message " +
+      (mine ? "mine" : "other");
+
+    const time =
       new Date(
-        msg.created_at
+        message.created_at
       ).toLocaleTimeString(
         "ru-RU",
         {
@@ -442,56 +507,65 @@ function renderMessages() {
 
     let reply = "";
 
-    if (msg.reply_text) {
+    if (message.reply_text) {
       reply = `
         <div class="replyPreview">
           <b>
             ${escapeHtml(
-              msg.reply_display_name ||
-              msg.reply_username ||
-              ""
+              message.reply_display_name ||
+              message.reply_username ||
+              "Сообщение"
             )}
           </b>
 
           ${escapeHtml(
-            msg.reply_text
+            message.reply_text
           )}
         </div>
       `;
     }
 
-    const read =
-      Number(msg.sender_id) ===
-      Number(me.id)
-        ? `
-          <span class="check">
-            ${msg.read_at ? "✓✓" : "✓"}
-          </span>
-        `
-        : "";
+    const checks = mine
+      ? `
+        <span class="check">
+          ${message.read_at
+            ? "✓✓"
+            : "✓"}
+        </span>
+      `
+      : "";
 
-    el.innerHTML = `
+    element.innerHTML = `
       ${reply}
 
       <div class="messageText">
-        ${escapeHtml(msg.text)}
+        ${escapeHtml(
+          message.text
+        )}
       </div>
 
       <div class="messageMeta">
-        ${date}
-        ${read}
+        ${time}
+        ${checks}
       </div>
     `;
 
-    addSwipeReply(el, msg);
+    addSwipeReply(
+      element,
+      message
+    );
 
-    $("messages").appendChild(el);
+    $("messages")
+      .appendChild(element);
   });
 }
 
-/* SEND */
+/* =========================
+   ОТПРАВКА
+========================= */
 
-$("sendBtn").onclick = sendMessage;
+$("sendBtn").onclick =
+  sendMessage;
 
 $("messageInput").onkeydown = e => {
   if (
@@ -505,9 +579,17 @@ $("messageInput").onkeydown = e => {
 
 function sendMessage() {
   const text =
-    $("messageInput").value.trim();
+    $("messageInput")
+      .value
+      .trim();
 
-  if (!text || !currentChat) return;
+  if (
+    !text ||
+    !currentChat ||
+    !socket
+  ) {
+    return;
+  }
 
   socket.emit(
     "sendMessage",
@@ -515,25 +597,33 @@ function sendMessage() {
       chatId: currentChat.id,
       text,
       replyTo:
-        replyTo?.id || null
+        replyTo
+          ? replyTo.id
+          : null
     },
     result => {
-      if (!result?.ok) {
+      if (
+        !result ||
+        !result.ok
+      ) {
         alert(
           result?.error ||
-          "Не удалось отправить"
+          "Не удалось отправить сообщение"
         );
 
         return;
       }
 
       $("messageInput").value = "";
+
       cancelReply();
     }
   );
 }
 
-/* READ */
+/* =========================
+   ПРОЧИТАНО
+========================= */
 
 async function markRead() {
   if (!currentChat) return;
@@ -548,79 +638,92 @@ async function markRead() {
   } catch {}
 }
 
-/* REPLY SWIPE */
+/* =========================
+   ОТВЕТ СМАХИВАНИЕМ
+========================= */
 
-function addSwipeReply(el, msg) {
-  let start = 0;
-  let moved = 0;
+function addSwipeReply(
+  element,
+  message
+) {
+  let startX = 0;
+  let distance = 0;
 
-  el.addEventListener(
+  element.addEventListener(
     "touchstart",
-    e => {
-      start =
-        e.touches[0].clientX;
+    event => {
+      startX =
+        event.touches[0]
+          .clientX;
 
-      moved = 0;
+      distance = 0;
     },
-    { passive: true }
+    {
+      passive: true
+    }
   );
 
-  el.addEventListener(
+  element.addEventListener(
     "touchmove",
-    e => {
-      moved =
-        e.touches[0].clientX -
-        start;
+    event => {
+      distance =
+        event.touches[0]
+          .clientX -
+        startX;
 
       if (
-        moved > 0 &&
-        moved < 80
+        distance > 0 &&
+        distance < 65
       ) {
-        el.style.transform =
-          `translateX(${moved}px)`;
+        element.style.transform =
+          `translateX(${distance}px)`;
       }
     },
-    { passive: true }
+    {
+      passive: true
+    }
   );
 
-  el.addEventListener(
+  element.addEventListener(
     "touchend",
     () => {
-      el.style.transform = "";
+      element.style.transform = "";
 
-      if (moved > 55) {
-        setReply(msg);
+      if (distance > 45) {
+        setReply(message);
       }
     }
   );
 }
 
-function setReply(msg) {
-  replyTo = msg;
+function setReply(message) {
+  replyTo = message;
 
   $("replyBox").hidden = false;
 
   $("replyName").textContent =
-    msg.reply_display_name ||
-    msg.sender_display_name ||
-    msg.sender_username ||
+    message.sender_display_name ||
+    message.sender_username ||
     "Пользователь";
 
   $("replyText").textContent =
-    msg.text;
+    message.text;
 
   $("messageInput").focus();
 }
 
 function cancelReply() {
   replyTo = null;
+
   $("replyBox").hidden = true;
 }
 
 $("cancelReply").onclick =
   cancelReply;
 
-/* SETTINGS */
+/* =========================
+   НАСТРОЙКИ
+========================= */
 
 $("settingsBtn").onclick = () => {
   $("settings").hidden = false;
@@ -633,47 +736,61 @@ $("settingsBtn").onclick = () => {
     "@" + me.username;
 
   $("newName").value =
-    me.display_name ||
-    "";
+    me.display_name || "";
 };
 
 $("closeSettings").onclick = () => {
   $("settings").hidden = true;
 };
 
-$("saveName").onclick = async () => {
-  try {
-    const name =
-      $("newName").value.trim();
+$("saveName").onclick =
+  async () => {
+    try {
+      const name =
+        $("newName")
+          .value
+          .trim();
 
-    const user =
-      await api("/api/me", {
-        method: "PATCH",
-        body: JSON.stringify({
-          displayName: name
-        })
-      });
+      const user =
+        await api(
+          "/api/me",
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              displayName: name
+            })
+          }
+        );
 
-    me = {
-      ...me,
-      ...user
-    };
+      me = {
+        ...me,
+        ...user
+      };
 
-    $("profileName").textContent =
-      me.display_name;
+      $("profileName")
+        .textContent =
+        me.display_name;
 
-    $("topTitle").textContent =
-      me.display_name;
+      $("profileUsername")
+        .textContent =
+        "@" + me.username;
 
-    $("settings").hidden = true;
+      $("topTitle")
+        .textContent =
+        me.display_name;
 
-    loadChats();
-  } catch (e) {
-    alert(e.message);
-  }
-};
+      $("settings").hidden = true;
 
-/* THEMES */
+      loadChats();
+
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+/* =========================
+   ТЕМЫ
+========================= */
 
 document
   .querySelectorAll(
@@ -699,47 +816,91 @@ function applyTheme() {
       "mtalk_theme"
     ) || "dark";
 
-  document.body.classList.remove(
-    "light",
-    "blue"
-  );
+  document.body
+    .classList
+    .remove(
+      "light",
+      "blue"
+    );
 
   if (theme !== "dark") {
-    document.body.classList.add(
-      theme
+    document.body
+      .classList
+      .add(theme);
+  }
+}
+
+/* =========================
+   ВСПОМОГАТЕЛЬНЫЕ
+========================= */
+
+function getInitials(name) {
+  const value =
+    String(name || "")
+      .trim();
+
+  if (!value) {
+    return "?";
+  }
+
+  const words =
+    value
+      .split(/\s+/)
+      .filter(Boolean);
+
+  if (words.length === 1) {
+    return words[0][0]
+      .toUpperCase();
+  }
+
+  return (
+    words[0][0] +
+    words[1][0]
+  ).toUpperCase();
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll(
+      "&",
+      "&amp;"
+    )
+    .replaceAll(
+      "<",
+      "&lt;"
+    )
+    .replaceAll(
+      ">",
+      "&gt;"
+    )
+    .replaceAll(
+      '"',
+      "&quot;"
+    )
+    .replaceAll(
+      "'",
+      "&#039;"
     );
-  }
 }
 
-/* ONLINE */
+function scrollBottom() {
+  requestAnimationFrame(() => {
+    const messages =
+      $("messages");
 
-function updateOnlineStatus(
-  userId,
-  isOnline
-) {
-  document
-    .querySelectorAll(".userResult")
-    .forEach(el => {
-      // список поиска обновится при следующем поиске
-    });
-
-  if (
-    currentChat &&
-    Number(currentChat.user_id) ===
-    Number(userId)
-  ) {
-    $("topStatus").textContent =
-      isOnline
-        ? "в сети"
-        : "был(а) недавно";
-  }
+    messages.scrollTop =
+      messages.scrollHeight;
+  });
 }
 
-/* LOGOUT */
+/* =========================
+   ВЫХОД
+========================= */
 
-$("logout").onclick = () => {
-  logout();
-};
+$("logout").onclick =
+  () => {
+    logout();
+  };
 
 function logout() {
   localStorage.removeItem(
@@ -755,26 +916,10 @@ function logout() {
   location.reload();
 }
 
-/* HELPERS */
-
-function scrollBottom() {
-  requestAnimationFrame(() => {
-    $("messages").scrollTop =
-      $("messages").scrollHeight;
-  });
-}
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-/* START */
+/* =========================
+   СТАРТ
+========================= */
 
 if (token) {
   startApp();
-      }
+}
