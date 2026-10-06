@@ -1,8 +1,9 @@
-[hidden] {
-  display: none !important;
-}
 * {
   box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 html,
@@ -10,6 +11,7 @@ body {
   margin: 0;
   width: 100%;
   height: 100%;
+  overflow: hidden;
   font-family: Arial, sans-serif;
 }
 
@@ -29,7 +31,8 @@ button {
 }
 
 .auth {
-  min-height: 100vh;
+  width: 100%;
+  height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -55,7 +58,7 @@ button {
   display: grid;
   place-items: center;
   border-radius: 22px;
-  background: linear-gradient(135deg,#9b4dca,#4d75e8);
+  background: linear-gradient(135deg, #9b4dca, #4d75e8);
   font-size: 36px;
   font-weight: bold;
 }
@@ -66,8 +69,8 @@ button {
 
 input {
   width: 100%;
-  padding: 14px 16px;
-  margin: 7px 0;
+  padding: 13px 15px;
+  margin: 6px 0;
   border: 1px solid #ffffff18;
   border-radius: 15px;
   outline: none;
@@ -84,7 +87,7 @@ input:focus {
   margin-top: 10px;
   padding: 14px;
   border-radius: 15px;
-  background: linear-gradient(135deg,#9146cf,#477be8);
+  background: linear-gradient(135deg, #9146cf, #477be8);
   color: white;
   font-weight: bold;
 }
@@ -101,18 +104,19 @@ input:focus {
 
 .app {
   width: 100%;
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   position: relative;
 }
 
 .topbar {
-  height: 68px;
+  height: 64px;
+  min-height: 64px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  background: linear-gradient(110deg,#522b72,#633a87);
+  gap: 8px;
+  padding: 7px 10px;
+  background: linear-gradient(110deg, #522b72, #633a87);
   box-shadow: 0 2px 12px #0005;
   position: relative;
   z-index: 5;
@@ -120,31 +124,36 @@ input:focus {
 
 .titleBlock {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
 
 .titleBlock b {
-  font-size: 19px;
+  font-size: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .titleBlock span {
   color: #d6cde0;
-  font-size: 12px;
-  margin-top: 3px;
+  font-size: 11px;
+  margin-top: 2px;
 }
 
 .icon {
   width: 42px;
   height: 42px;
+  flex: 0 0 42px;
   border-radius: 50%;
   background: #ffffff12;
   color: white;
-  font-size: 25px;
+  font-size: 24px;
 }
 
 .searchPanel {
-  padding: 10px;
+  padding: 8px;
   background: #192532;
   border-bottom: 1px solid #ffffff12;
 }
@@ -154,16 +163,16 @@ input:focus {
 }
 
 #searchResults {
-  max-height: 55vh;
-  overflow: auto;
+  max-height: 45dvh;
+  overflow-y: auto;
 }
 
 .userResult,
 .chatItem {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 13px;
+  gap: 11px;
+  padding: 11px;
   border-bottom: 1px solid #ffffff09;
   cursor: pointer;
 }
@@ -174,14 +183,15 @@ input:focus {
 }
 
 .avatar {
-  width: 48px;
-  height: 48px;
-  flex: 0 0 48px;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 46px;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg,#8d55db,#4e86ed);
+  background: linear-gradient(135deg, #8d55db, #4e86ed);
   font-weight: bold;
+  color: white;
 }
 
 .avatar.big {
@@ -209,8 +219,8 @@ input:focus {
 .chatInfo span {
   display: block;
   color: #9ba8b5;
-  font-size: 13px;
-  margin-top: 4px;
+  font-size: 12px;
+  margin-top: 3px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -221,23 +231,27 @@ input:focus {
 }
 
 .chatList {
-  height: calc(100vh - 68px);
+  height: calc(100dvh - 64px);
   overflow-y: auto;
   background:
-    radial-gradient(circle at 20% 10%,#243544 0 1px,transparent 2px),
+    radial-gradient(circle at 20% 10%, #243544 0 1px, transparent 2px),
     #101b24;
 }
 
 .chat {
-  height: calc(100vh - 68px);
+  height: calc(100dvh - 64px);
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .messages {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
-  padding: 12px 10px 10px;
+  overscroll-behavior: contain;
+  padding: 9px 9px 8px;
   background:
     radial-gradient(circle at 10% 20%, #ffffff08 0 2px, transparent 3px),
     radial-gradient(circle at 80% 70%, #ffffff06 0 2px, transparent 3px),
@@ -245,11 +259,12 @@ input:focus {
 }
 
 .message {
-  max-width: 72%;
+  display: block;
   width: fit-content;
-  margin: 4px 0;
-  padding: 8px 11px 6px;
-  border-radius: 15px;
+  max-width: 65%;
+  margin: 3px 0;
+  padding: 6px 9px 5px;
+  border-radius: 13px;
   position: relative;
   word-break: break-word;
   animation: messageIn .16s ease;
@@ -260,6 +275,7 @@ input:focus {
     opacity: 0;
     transform: translateY(5px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -268,41 +284,44 @@ input:focus {
 
 .message.mine {
   margin-left: auto;
-  background: linear-gradient(135deg,#7350db,#387fdd);
-  border-bottom-right-radius: 5px;
+  background: linear-gradient(135deg, #7350db, #387fdd);
+  border-bottom-right-radius: 4px;
 }
 
 .message.other {
   margin-right: auto;
   background: #263443;
-  border-bottom-left-radius: 5px;
+  border-bottom-left-radius: 4px;
 }
 
 .messageText {
-  line-height: 1.35;
-  font-size: 16px;
+  line-height: 1.25;
+  font-size: 15px;
   white-space: pre-wrap;
 }
 
 .messageMeta {
   float: right;
-  margin: 5px 0 -2px 9px;
+  margin: 4px 0 -2px 7px;
   color: #b9c5d1;
-  font-size: 10px;
+  font-size: 9px;
+  white-space: nowrap;
 }
 
 .check {
-  font-size: 13px;
+  font-size: 12px;
   margin-left: 3px;
+  letter-spacing: -2px;
 }
 
 .replyPreview {
   border-left: 3px solid #9e8bea;
   background: #ffffff0c;
-  padding: 5px 8px;
-  border-radius: 7px;
-  margin-bottom: 6px;
-  font-size: 12px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  margin-bottom: 5px;
+  font-size: 11px;
+  max-width: 220px;
 }
 
 .replyPreview b {
@@ -312,34 +331,38 @@ input:focus {
 }
 
 .composer {
-  min-height: 64px;
-  padding: 8px;
+  flex: 0 0 auto;
+  min-height: 58px;
+  padding: 6px 8px;
   display: flex;
-  gap: 8px;
+  gap: 7px;
   background: #182532;
   border-top: 1px solid #ffffff10;
+  padding-bottom: max(6px, env(safe-area-inset-bottom));
 }
 
 .composer input {
   margin: 0;
-  border-radius: 22px;
-  padding-left: 17px;
+  height: 46px;
+  border-radius: 23px;
+  padding-left: 16px;
 }
 
 #sendBtn {
-  width: 48px;
-  height: 48px;
-  flex: 0 0 48px;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 46px;
   border-radius: 50%;
   background: #238be7;
   color: white;
-  font-size: 21px;
+  font-size: 20px;
 }
 
 .replyBox {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  padding: 7px 12px;
+  padding: 6px 10px;
   background: #202e3c;
   border-left: 4px solid #8d72e8;
 }
@@ -359,19 +382,19 @@ input:focus {
 
 .replyBox b {
   color: #a996ff;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .replyBox span {
   color: #b9c3ce;
-  font-size: 12px;
+  font-size: 11px;
   margin-top: 2px;
 }
 
 #cancelReply {
   background: none;
   color: #aaa;
-  font-size: 24px;
+  font-size: 23px;
 }
 
 .modal {
@@ -387,12 +410,13 @@ input:focus {
 .modal-card {
   width: 100%;
   max-width: 600px;
-  max-height: 90vh;
+  max-height: 90dvh;
   overflow-y: auto;
   padding: 22px;
   border-radius: 25px 25px 0 0;
   background: #182532;
   position: relative;
+  padding-bottom: max(22px, env(safe-area-inset-bottom));
 }
 
 .close {
@@ -458,7 +482,7 @@ input:focus {
   color: white;
 }
 
-/* LIGHT */
+/* Светлая тема */
 
 body.light {
   background: #eef2f6;
@@ -496,15 +520,17 @@ body.light input {
   color: #18222c;
 }
 
-/* BLUE */
+/* Синяя тема */
 
 body.blue .topbar {
-  background: linear-gradient(110deg,#1767a5,#248bd0);
+  background: linear-gradient(110deg, #1767a5, #248bd0);
 }
 
 body.blue .message.mine {
-  background: linear-gradient(135deg,#237bc0,#1675cf);
+  background: linear-gradient(135deg, #237bc0, #1675cf);
 }
+
+/* ПК */
 
 @media (min-width: 700px) {
   .app {
@@ -514,6 +540,6 @@ body.blue .message.mine {
   }
 
   .message {
-    max-width: 60%;
+    max-width: 55%;
   }
 }
