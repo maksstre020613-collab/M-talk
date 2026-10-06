@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>M-Talk</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+
+<body>
+
+<div id="auth" class="auth">
+  <div class="auth-card">
+
+    <div class="logo">M-Talk</div>
+    <div class="subtitle">Интернет-мессенджер</div>
+
+    <input id="username" placeholder="Логин">
+    <input id="password" type="password" placeholder="Пароль">
+
+    <div id="authError" class="error"></div>
+
+    <button id="loginBtn" class="primary">
+      Войти
+    </button>
+
+    <button id="registerBtn" class="secondary">
+      Создать аккаунт
+    </button>
+
+  </div>
+</div>
+
+<div id="app" class="app hidden">
+
+  <aside class="sidebar">
+
+    <div class="top">
+
+      <div class="top-row">
+
+        <div>
+          <div class="brand">M-Talk</div>
+          <div id="currentUser" class="user-name"></div>
+        </div>
+
+        <button id="logoutBtn" class="logout">
+          Выйти
+        </button>
+
+      </div>
+
+    </div>
+
+    <div class="search">
+      <input
+        id="search"
+        placeholder="Поиск пользователей..."
+      >
+    </div>
+
+    <div id="results" class="results"></div>
+
+    <div id="chats" class="chats"></div>
+
+  </aside>
+
+  <main class="chat">
+
+    <div class="chat-header">
+
+      <button id="backBtn" class="back">
+        ‹
+      </button>
+
+      <div id="chatTitle">
+        Выберите чат
+      </div>
+
+    </div>
+
+    <div id="messages" class="messages">
+
+      <div class="empty">
+        Выберите пользователя или создайте чат
+      </div>
+
+    </div>
+
+    <div class="composer">
+
+      <input
+        id="messageInput"
+        class="message-input"
+        placeholder="Сообщение..."
+        autocomplete="off"
+      >
+
+      <button id="sendBtn" class="send">
+        ➤
+      </button>
+
+    </div>
+
+  </main>
+
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/app.js"></script>
+
+</body>
+</html>
