@@ -2,21 +2,18 @@
   box-sizing: border-box;
 }
 
-[hidden] {
-  display: none !important;
-}
-
 html,
 body {
-  margin: 0;
   width: 100%;
   height: 100%;
+  margin: 0;
+  padding: 0;
   overflow: hidden;
-  font-family: Arial, sans-serif;
+  font-family: Arial, Helvetica, sans-serif;
 }
 
 body {
-  background: #101820;
+  background: #101b24;
   color: #fff;
 }
 
@@ -30,132 +27,261 @@ button {
   cursor: pointer;
 }
 
+[hidden] {
+  display: none !important;
+}
+
+/* ========================================
+   АВТОРИЗАЦИЯ
+======================================== */
+
 .auth {
   width: 100%;
   height: 100dvh;
+
   display: flex;
   align-items: center;
   justify-content: center;
+
   padding: 20px;
+
   background:
-    radial-gradient(circle at top, #66358d, transparent 45%),
+    radial-gradient(
+      circle at 50% 0%,
+      #703b91 0%,
+      transparent 45%
+    ),
     #101820;
 }
 
 .auth-card {
   width: min(420px, 100%);
+
   padding: 28px;
+
   border-radius: 25px;
-  background: rgba(28, 39, 53, .96);
-  box-shadow: 0 20px 60px #0008;
+
+  background: rgba(27, 39, 53, 0.97);
+
+  box-shadow:
+    0 20px 70px rgba(0, 0, 0, 0.55);
+
   text-align: center;
 }
 
 .logo {
   width: 70px;
   height: 70px;
-  margin: auto;
+
+  margin: 0 auto 15px;
+
   display: grid;
   place-items: center;
+
   border-radius: 22px;
-  background: linear-gradient(135deg, #9b4dca, #4d75e8);
+
+  background:
+    linear-gradient(
+      135deg,
+      #984ed0,
+      #4c79e8
+    );
+
   font-size: 36px;
   font-weight: bold;
 }
 
 .auth-card h1 {
-  margin: 15px 0 25px;
+  margin: 0 0 25px;
 }
 
 input {
   width: 100%;
-  padding: 13px 15px;
+
+  height: 48px;
+
+  padding: 0 15px;
+
   margin: 6px 0;
-  border: 1px solid #ffffff18;
+
+  border: 1px solid rgba(255,255,255,.08);
+
   border-radius: 15px;
+
   outline: none;
-  background: #ffffff0c;
-  color: #fff;
+
+  background: rgba(255,255,255,.07);
+
+  color: white;
+}
+
+input::placeholder {
+  color: #8895a2;
 }
 
 input:focus {
-  border-color: #8e52e8;
+  border-color: #8554e8;
 }
 
 .auth-card > div > button:not(.link) {
   width: 100%;
+
   margin-top: 10px;
+
   padding: 14px;
+
   border-radius: 15px;
-  background: linear-gradient(135deg, #9146cf, #477be8);
+
+  background:
+    linear-gradient(
+      135deg,
+      #9146cf,
+      #477be8
+    );
+
   color: white;
+
   font-weight: bold;
 }
 
 .link {
+  margin-top: 10px;
+
   background: none;
+
   color: #7ca9ff;
 }
 
 #authError {
-  color: #ff7777;
+  min-height: 20px;
+
   margin-top: 12px;
+
+  color: #ff7070;
 }
+
+/* ========================================
+   ОСНОВНОЕ ПРИЛОЖЕНИЕ
+======================================== */
 
 .app {
   width: 100%;
   height: 100dvh;
-  overflow: hidden;
+
   position: relative;
+
+  overflow: hidden;
+
+  background: #101b24;
 }
 
+/* ========================================
+   ВЕРХНЯЯ ПАНЕЛЬ
+======================================== */
+
 .topbar {
+  width: 100%;
   height: 64px;
   min-height: 64px;
+
   display: flex;
   align-items: center;
+
   gap: 8px;
+
   padding: 7px 10px;
-  background: linear-gradient(110deg, #522b72, #633a87);
-  box-shadow: 0 2px 12px #0005;
+
+  background:
+    linear-gradient(
+      110deg,
+      #522b72,
+      #693c8e
+    );
+
+  box-shadow:
+    0 2px 14px rgba(0,0,0,.35);
+
   position: relative;
-  z-index: 5;
+
+  z-index: 10;
 }
 
 .titleBlock {
   flex: 1;
+
   min-width: 0;
+
   display: flex;
   flex-direction: column;
+
+  justify-content: center;
 }
 
 .titleBlock b {
   font-size: 18px;
+
   white-space: nowrap;
+
   overflow: hidden;
+
   text-overflow: ellipsis;
 }
 
 .titleBlock span {
-  color: #d6cde0;
-  font-size: 11px;
   margin-top: 2px;
+
+  color: #d6cde0;
+
+  font-size: 11px;
+
+  white-space: nowrap;
 }
 
 .icon {
   width: 42px;
   height: 42px;
+
   flex: 0 0 42px;
+
+  display: grid;
+  place-items: center;
+
   border-radius: 50%;
-  background: #ffffff12;
+
+  background: rgba(255,255,255,.10);
+
   color: white;
-  font-size: 24px;
+
+  font-size: 23px;
+
+  transition:
+    transform .15s,
+    background .15s;
 }
 
+.icon:active {
+  transform: scale(.9);
+
+  background: rgba(255,255,255,.18);
+}
+
+/* ========================================
+   ПОИСК
+======================================== */
+
 .searchPanel {
+  width: 100%;
+
   padding: 8px;
+
   background: #192532;
-  border-bottom: 1px solid #ffffff12;
+
+  border-bottom:
+    1px solid rgba(255,255,255,.06);
+
+  position: relative;
+
+  z-index: 8;
 }
 
 .searchPanel input {
@@ -164,65 +290,100 @@ input:focus {
 
 #searchResults {
   max-height: 45dvh;
+
   overflow-y: auto;
 }
 
 .userResult,
 .chatItem {
+  width: 100%;
+
   display: flex;
   align-items: center;
+
   gap: 11px;
+
   padding: 11px;
-  border-bottom: 1px solid #ffffff09;
+
+  border-bottom:
+    1px solid rgba(255,255,255,.05);
+
   cursor: pointer;
 }
 
 .userResult:active,
 .chatItem:active {
-  background: #ffffff0b;
+  background: rgba(255,255,255,.06);
 }
+
+/* ========================================
+   АВАТАРЫ
+======================================== */
 
 .avatar {
   width: 46px;
   height: 46px;
+
   flex: 0 0 46px;
-  border-radius: 50%;
+
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, #8d55db, #4e86ed);
-  font-weight: bold;
+
+  border-radius: 50%;
+
+  background:
+    linear-gradient(
+      135deg,
+      #8d55db,
+      #4e86ed
+    );
+
   color: white;
+
+  font-weight: bold;
 }
 
 .avatar.big {
   width: 58px;
   height: 58px;
+
   flex-basis: 58px;
+
   font-size: 22px;
 }
 
 .userInfo,
 .chatInfo {
   min-width: 0;
+
   flex: 1;
 }
 
 .userInfo b,
 .chatInfo b {
   display: block;
+
   white-space: nowrap;
+
   overflow: hidden;
+
   text-overflow: ellipsis;
 }
 
 .userInfo span,
 .chatInfo span {
   display: block;
-  color: #9ba8b5;
-  font-size: 12px;
+
   margin-top: 3px;
+
+  color: #9ba8b5;
+
+  font-size: 12px;
+
   white-space: nowrap;
+
   overflow: hidden;
+
   text-overflow: ellipsis;
 }
 
@@ -230,273 +391,645 @@ input:focus {
   color: #55d982 !important;
 }
 
+/* ========================================
+   СПИСОК ЧАТОВ
+======================================== */
+
 .chatList {
+  width: 100%;
+
   height: calc(100dvh - 64px);
+
   overflow-y: auto;
+
   background:
-    radial-gradient(circle at 20% 10%, #243544 0 1px, transparent 2px),
+    radial-gradient(
+      circle at 20% 10%,
+      rgba(255,255,255,.035) 0 1px,
+      transparent 2px
+    ),
     #101b24;
 }
 
+/* ========================================
+   ОКНО ЧАТА
+======================================== */
+
 .chat {
+  width: 100%;
   height: calc(100dvh - 64px);
+
   min-height: 0;
+
   display: flex;
+
   flex-direction: column;
+
   overflow: hidden;
 }
 
+/* ========================================
+   СООБЩЕНИЯ
+======================================== */
+
 .messages {
   flex: 1 1 auto;
+
   min-height: 0;
+
+  width: 100%;
+
   overflow-y: auto;
+
+  overflow-x: hidden;
+
   overscroll-behavior: contain;
-  padding: 9px 9px 8px;
+
+  padding: 8px 8px 10px;
+
   background:
-    radial-gradient(circle at 10% 20%, #ffffff08 0 2px, transparent 3px),
-    radial-gradient(circle at 80% 70%, #ffffff06 0 2px, transparent 3px),
+    radial-gradient(
+      circle at 10% 20%,
+      rgba(255,255,255,.025) 0 2px,
+      transparent 3px
+    ),
+    radial-gradient(
+      circle at 80% 70%,
+      rgba(255,255,255,.02) 0 2px,
+      transparent 3px
+    ),
     #101b24;
 }
 
+/* ========================================
+   ПУЗЫРЁК СООБЩЕНИЯ
+======================================== */
+
 .message {
-  display: block;
-  width: fit-content;
-  max-width: 65%;
-  margin: 3px 0;
-  padding: 6px 9px 5px;
-  border-radius: 13px;
-  position: relative;
-  word-break: break-word;
-  animation: messageIn .16s ease;
+  display: grid !important;
+
+  /*
+    Очень важно:
+    max-content позволяет коротким
+    сообщениям быть маленькими.
+  */
+  width: max-content !important;
+
+  /*
+    Но длинное сообщение не может
+    занять весь экран.
+  */
+  max-width: min(72%, 430px) !important;
+
+  min-width: 0 !important;
+
+  margin-top: 4px !important;
+  margin-bottom: 4px !important;
+
+  padding:
+    7px
+    8px
+    5px
+    10px !important;
+
+  border-radius: 14px !important;
+
+  position: relative !important;
+
+  overflow-wrap: anywhere !important;
+
+  word-break: break-word !important;
+
+  animation:
+    messageIn .15s ease;
 }
 
+/* ========================================
+   МОИ СООБЩЕНИЯ
+======================================== */
+
+.message.mine {
+  margin-left: auto !important;
+
+  margin-right: 0 !important;
+
+  background:
+    linear-gradient(
+      135deg,
+      #7350db,
+      #387fdd
+    ) !important;
+
+  border-bottom-right-radius: 4px !important;
+}
+
+/* ========================================
+   СООБЩЕНИЯ СОБЕСЕДНИКА
+======================================== */
+
+.message.other {
+  margin-left: 0 !important;
+
+  margin-right: auto !important;
+
+  background: #263443 !important;
+
+  border-bottom-left-radius: 4px !important;
+}
+
+/* ========================================
+   ТЕКСТ СООБЩЕНИЯ
+======================================== */
+
+.messageText {
+  display: inline !important;
+
+  min-width: 0 !important;
+
+  margin: 0 !important;
+
+  padding: 0 !important;
+
+  font-size: 15px !important;
+
+  line-height: 1.28 !important;
+
+  white-space: pre-wrap !important;
+
+  overflow-wrap: anywhere !important;
+
+  word-break: break-word !important;
+}
+
+/*
+  Чтобы время было внутри пузырька,
+  а не под ним.
+*/
+.messageMeta {
+  display: inline-block !important;
+
+  float: none !important;
+
+  position: static !important;
+
+  margin:
+    3px
+    0
+    -2px
+    7px !important;
+
+  color: #b9c5d1 !important;
+
+  font-size: 9px !important;
+
+  line-height: 10px !important;
+
+  white-space: nowrap !important;
+
+  vertical-align: bottom !important;
+}
+
+/* ========================================
+   ГАЛОЧКИ
+======================================== */
+
+.check {
+  display: inline-block !important;
+
+  margin-left: 3px !important;
+
+  font-size: 11px !important;
+
+  line-height: 10px !important;
+
+  letter-spacing: -2px !important;
+
+  color: #d5e1ec;
+}
+
+/* ========================================
+   ОТВЕТ НА СООБЩЕНИЕ
+======================================== */
+
+.replyPreview {
+  display: block !important;
+
+  width: 100% !important;
+
+  max-width: 100% !important;
+
+  padding:
+    4px
+    6px !important;
+
+  margin-bottom: 5px !important;
+
+  border-left:
+    3px solid #9e8bea !important;
+
+  border-radius: 5px !important;
+
+  background:
+    rgba(255,255,255,.07) !important;
+
+  font-size: 10px !important;
+
+  line-height: 1.2 !important;
+
+  overflow: hidden !important;
+
+  word-break: break-word !important;
+}
+
+.replyPreview b {
+  display: block !important;
+
+  margin-bottom: 2px !important;
+
+  color: #b5a7ff !important;
+
+  font-size: 10px !important;
+}
+
+/* ========================================
+   АНИМАЦИЯ СООБЩЕНИЯ
+======================================== */
+
 @keyframes messageIn {
+
   from {
     opacity: 0;
-    transform: translateY(5px);
+
+    transform:
+      translateY(5px);
   }
 
   to {
     opacity: 1;
-    transform: translateY(0);
+
+    transform:
+      translateY(0);
   }
+
 }
 
-.message.mine {
-  margin-left: auto;
-  background: linear-gradient(135deg, #7350db, #387fdd);
-  border-bottom-right-radius: 4px;
-}
-
-.message.other {
-  margin-right: auto;
-  background: #263443;
-  border-bottom-left-radius: 4px;
-}
-
-.messageText {
-  line-height: 1.25;
-  font-size: 15px;
-  white-space: pre-wrap;
-}
-
-.messageMeta {
-  float: right;
-  margin: 4px 0 -2px 7px;
-  color: #b9c5d1;
-  font-size: 9px;
-  white-space: nowrap;
-}
-
-.check {
-  font-size: 12px;
-  margin-left: 3px;
-  letter-spacing: -2px;
-}
-
-.replyPreview {
-  border-left: 3px solid #9e8bea;
-  background: #ffffff0c;
-  padding: 5px 7px;
-  border-radius: 6px;
-  margin-bottom: 5px;
-  font-size: 11px;
-  max-width: 220px;
-}
-
-.replyPreview b {
-  display: block;
-  color: #b5a7ff;
-  margin-bottom: 2px;
-}
-
-.composer {
-  flex: 0 0 auto;
-  min-height: 58px;
-  padding: 6px 8px;
-  display: flex;
-  gap: 7px;
-  background: #182532;
-  border-top: 1px solid #ffffff10;
-  padding-bottom: max(6px, env(safe-area-inset-bottom));
-}
-
-.composer input {
-  margin: 0;
-  height: 46px;
-  border-radius: 23px;
-  padding-left: 16px;
-}
-
-#sendBtn {
-  width: 46px;
-  height: 46px;
-  flex: 0 0 46px;
-  border-radius: 50%;
-  background: #238be7;
-  color: white;
-  font-size: 20px;
-}
+/* ========================================
+   ОТВЕТ НА СООБЩЕНИЕ
+======================================== */
 
 .replyBox {
+  width: 100%;
+
   flex: 0 0 auto;
+
   display: flex;
+
   align-items: center;
-  padding: 6px 10px;
+
+  gap: 8px;
+
+  padding:
+    6px
+    10px;
+
   background: #202e3c;
-  border-left: 4px solid #8d72e8;
+
+  border-left:
+    4px solid #8d72e8;
 }
 
 .replyBox > div {
   flex: 1;
+
   min-width: 0;
 }
 
 .replyBox b,
 .replyBox span {
   display: block;
+
   overflow: hidden;
+
   text-overflow: ellipsis;
+
   white-space: nowrap;
 }
 
 .replyBox b {
   color: #a996ff;
+
   font-size: 12px;
 }
 
 .replyBox span {
-  color: #b9c3ce;
-  font-size: 11px;
   margin-top: 2px;
+
+  color: #b9c3ce;
+
+  font-size: 11px;
 }
 
 #cancelReply {
+  width: 36px;
+  height: 36px;
+
+  flex: 0 0 36px;
+
   background: none;
+
   color: #aaa;
+
   font-size: 23px;
 }
 
+/* ========================================
+   ПОЛЕ ВВОДА
+======================================== */
+
+.composer {
+  width: 100%;
+
+  flex: 0 0 auto;
+
+  min-height: 58px;
+
+  display: flex;
+
+  align-items: center;
+
+  gap: 7px;
+
+  padding:
+    6px
+    8px;
+
+  padding-bottom:
+    max(
+      6px,
+      env(safe-area-inset-bottom)
+    );
+
+  background: #182532;
+
+  border-top:
+    1px solid rgba(255,255,255,.07);
+
+  position: relative;
+
+  z-index: 5;
+}
+
+.composer input {
+  flex: 1;
+
+  min-width: 0;
+
+  height: 46px;
+
+  margin: 0;
+
+  padding:
+    0
+    16px;
+
+  border-radius: 23px;
+
+  background: #253442;
+
+  border:
+    1px solid rgba(255,255,255,.07);
+}
+
+#sendBtn {
+  width: 46px;
+  height: 46px;
+
+  flex: 0 0 46px;
+
+  display: grid;
+  place-items: center;
+
+  border-radius: 50%;
+
+  background: #238be7;
+
+  color: white;
+
+  font-size: 20px;
+
+  transition:
+    transform .12s;
+}
+
+#sendBtn:active {
+  transform: scale(.9);
+}
+
+/* ========================================
+   НАСТРОЙКИ
+======================================== */
+
 .modal {
   position: fixed;
+
   inset: 0;
-  z-index: 20;
-  background: #0009;
+
+  z-index: 100;
+
   display: flex;
-  justify-content: center;
+
   align-items: flex-end;
+
+  justify-content: center;
+
+  background:
+    rgba(0,0,0,.62);
 }
 
 .modal-card {
   width: 100%;
+
   max-width: 600px;
+
   max-height: 90dvh;
+
   overflow-y: auto;
-  padding: 22px;
-  border-radius: 25px 25px 0 0;
-  background: #182532;
+
   position: relative;
-  padding-bottom: max(22px, env(safe-area-inset-bottom));
+
+  padding:
+    22px;
+
+  padding-bottom:
+    max(
+      22px,
+      env(safe-area-inset-bottom)
+    );
+
+  border-radius:
+    25px
+    25px
+    0
+    0;
+
+  background: #182532;
+
+  box-shadow:
+    0 -10px 50px rgba(0,0,0,.4);
 }
 
 .close {
   position: absolute;
-  right: 15px;
+
   top: 12px;
+  right: 15px;
+
   width: 40px;
   height: 40px;
+
+  display: grid;
+  place-items: center;
+
   border-radius: 50%;
-  background: #ffffff0d;
+
+  background:
+    rgba(255,255,255,.08);
+
   color: white;
+
   font-size: 25px;
 }
 
 .profile {
   display: flex;
+
   align-items: center;
+
   gap: 13px;
-  margin: 20px 0;
+
+  margin:
+    20px 0;
 }
 
 .profile span {
   display: block;
-  color: #8e9ba8;
+
   margin-top: 5px;
+
+  color: #8e9ba8;
 }
 
 .modal-card label,
 .modal-card h3 {
   display: block;
-  margin-top: 18px;
-}
 
-.modal-card > button:not(.close):not(.danger),
-.themeButtons button {
-  padding: 12px;
-  border-radius: 13px;
-  background: #ffffff12;
-  color: white;
-  margin-top: 8px;
+  margin-top: 18px;
 }
 
 #saveName {
   width: 100%;
-  background: #527ee8 !important;
+
+  padding: 13px;
+
+  margin-top: 10px;
+
+  border-radius: 14px;
+
+  background: #527ee8;
+
+  color: white;
 }
 
 .themeButtons {
   display: flex;
+
   gap: 8px;
 }
 
 .themeButtons button {
   flex: 1;
+
+  padding: 12px;
+
+  margin-top: 8px;
+
+  border-radius: 13px;
+
+  background:
+    rgba(255,255,255,.07);
+
+  color: white;
+}
+
+.themeButtons button:active {
+  transform: scale(.97);
 }
 
 .danger {
   width: 100%;
+
   margin-top: 25px;
+
   padding: 13px;
+
   border-radius: 14px;
+
   background: #d8465c;
+
   color: white;
 }
 
-/* Светлая тема */
+/* ========================================
+   СВЕТЛАЯ ТЕМА
+======================================== */
 
 body.light {
-  background: #eef2f6;
+  background: #edf2f7;
+
   color: #18222c;
 }
 
-body.light .chatList,
+body.light .app {
+  background: #edf2f7;
+}
+
+body.light .chatList {
+  background: #edf2f7;
+}
+
 body.light .messages {
   background: #edf2f7;
 }
 
-body.light .chatItem,
-body.light .userResult {
-  border-color: #0000000d;
+body.light .composer {
+  background: #ffffff;
+
+  border-color: #00000012;
+}
+
+body.light .searchPanel {
+  background: #ffffff;
+}
+
+body.light .message.other {
+  background: #ffffff;
+
+  color: #18222c;
+
+  box-shadow:
+    0 1px 2px rgba(0,0,0,.08);
+}
+
+body.light input {
+  background: #f0f3f6;
+
+  color: #18222c;
+}
+
+body.light .modal-card {
+  background: #ffffff;
+
+  color: #18222c;
 }
 
 body.light .chatInfo span,
@@ -504,42 +1037,93 @@ body.light .userInfo span {
   color: #71808e;
 }
 
-body.light .message.other {
-  background: white;
-  color: #18222c;
-}
-
-body.light .composer,
-body.light .searchPanel,
-body.light .modal-card {
-  background: #fff;
-}
-
-body.light input {
-  background: #f0f3f6;
-  color: #18222c;
-}
-
-/* Синяя тема */
+/* ========================================
+   СИНЯЯ ТЕМА
+======================================== */
 
 body.blue .topbar {
-  background: linear-gradient(110deg, #1767a5, #248bd0);
+  background:
+    linear-gradient(
+      110deg,
+      #1767a5,
+      #248bd0
+    );
 }
 
 body.blue .message.mine {
-  background: linear-gradient(135deg, #237bc0, #1675cf);
+  background:
+    linear-gradient(
+      135deg,
+      #237bc0,
+      #1675cf
+    );
 }
 
-/* ПК */
+/* ========================================
+   МОБИЛЬНЫЕ
+======================================== */
 
-@media (min-width: 700px) {
-  .app {
-    max-width: 900px;
-    margin: auto;
-    box-shadow: 0 0 60px #0007;
+@media (max-width: 600px) {
+
+  .topbar {
+    height: 64px;
+    min-height: 64px;
+
+    padding:
+      7px
+      8px;
   }
 
   .message {
-    max-width: 55%;
+    max-width: 72% !important;
+
+    padding:
+      7px
+      8px
+      5px
+      9px !important;
   }
+
+  .messageText {
+    font-size: 15px !important;
+
+    line-height: 1.28 !important;
+  }
+
+  .messageMeta {
+    font-size: 9px !important;
+  }
+
+  .messages {
+    padding:
+      7px
+      7px
+      8px;
+  }
+
+  .composer {
+    min-height: 58px;
+  }
+
+}
+
+/* ========================================
+   БОЛЬШОЙ ЭКРАН
+======================================== */
+
+@media (min-width: 700px) {
+
+  .app {
+    max-width: 900px;
+
+    margin: 0 auto;
+
+    box-shadow:
+      0 0 60px rgba(0,0,0,.55);
+  }
+
+  .message {
+    max-width: 55% !important;
+  }
+
 }
