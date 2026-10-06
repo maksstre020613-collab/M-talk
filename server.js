@@ -1,1564 +1,2228 @@
 const express = require("express");
 const http = require("http");
+const path = require("path");
+const fs = require("fs");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const Database = require("better-sqlite3");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const { Server } = require("socket.io");
-const fs = require("fs");
-const path = require("path");
+
+// ============================================================
+// CONFIG
+// ============================================================
 
 const app = express();
+
+// ВАЖНО ДЛЯ RENDER
+app.set("trust proxy", 1);
+
 const server = http.createServer(app);
 const io = new Server(server);
 
 const PORT = process.env.PORT || 10000;
-const JWT_SECRET = process.env.JWT_SECRET || "mtalk-development-secret";
+const JWT_SECRET =
+    process.env.JWT_SECRET ||
+    "M-Talk-development-secret-change-this";
 
-if (!process.env.JWT_SECRET) {
-  console.warn("WARNING: JWT_SECRET is not set.");
+const DATA_DIR = path.join(__dirname, "data");
+
+if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-/* ================= DATABASE ================= */
+// ============================================================
+// DATABASE
+// ============================================================
 
-fs.mkdirSync(path.join(__dirname, "data"), {
-  recursive: true
-});
+const dbPath = path.join(DATA_DIR, "mtalk.db");
 
-const db = new Database(
-  path.join(__dirname, "data", "mtalk.db")
-);
+const db = new Database(dbPath);
 
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT UNIQUE NOT NULL,
-  password TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    created_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS chats (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user1 INTEGER NOT NULL,
-  user2 INTEGER NOT NULL,
-  created_at INTEGER NOT NULL,
-  UNIQUE(user1, user2),
-  FOREIGN KEY(user1) REFERENCES users(id) ON DELETE CASCADE,
-  FOREIGN KEY(user2) REFERENCES users(id) ON DELETE CASCADE
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user1_id INTEGER NOT NULL,
+    user2_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+
+    FOREIGN KEY(user1_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(user2_id) REFERENCES users(id) ON DELETE CASCADE,
+
+    UNIQUE(user1_id, user2_id)
 );
 
 CREATE TABLE IF NOT EXISTS messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  chat_id INTEGER NOT NULL,
-  sender_id INTEGER NOT NULL,
-  text TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE,
-  FOREIGN KEY(sender_id) REFERENCES users(id) ON DELETE CASCADE
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    sender_id INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+
+    FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+    FOREIGN KEY(sender_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_messages_chat
+ON messages(chat_id, id);
+
+CREATE INDEX IF NOT EXISTS idx_chats_user1
+ON chats(user1_id);
+
+CREATE INDEX IF NOT EXISTS idx_chats_user2
+ON chats(user2_id);
+
+CREATE INDEX IF NOT EXISTS idx_users_username
+ON users(username);
 `);
 
-/* ================= SECURITY ================= */
-
-app.disable("x-powered-by");
-
-app.use(
-  helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-
-        // ВАЖНО: разрешаем встроенный JS
-        scriptSrc: [
-          "'self'",
-          "'unsafe-inline'"
-        ],
-
-        // Разрешаем встроенный CSS
-        styleSrc: [
-          "'self'",
-          "'unsafe-inline'"
-        ],
-
-        connectSrc: [
-          "'self'",
-          "ws:",
-          "wss:"
-        ],
-
-        imgSrc: [
-          "'self'",
-          "data:"
-        ],
-
-        objectSrc: [
-          "'none'"
-        ],
-
-        baseUri: [
-          "'self'"
-        ],
-
-        frameAncestors: [
-          "'none'"
-        ]
-      }
-    }
-  })
-);
+// ============================================================
+// MIDDLEWARE
+// ============================================================
 
 app.use(
-  express.json({
-    limit: "32kb"
-  })
+    helmet({
+        contentSecurityPolicy: {
+            directives: {
+                defaultSrc: ["'self'"],
+
+                scriptSrc: [
+                    "'self'",
+                    "'unsafe-inline'",
+                ],
+
+                styleSrc: [
+                    "'self'",
+                    "'unsafe-inline'",
+                ],
+
+                connectSrc: [
+                    "'self'",
+                    "ws:",
+                    "wss:",
+                ],
+
+                imgSrc: [
+                    "'self'",
+                    "data:",
+                ],
+
+                objectSrc: ["'none'"],
+
+                baseUri: ["'self'"],
+
+                frameAncestors: ["'none'"],
+            },
+        },
+    })
 );
 
-const authLimit = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false
+app.use(express.json({ limit: "32kb" }));
+
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+
+    standardHeaders: true,
+    legacyHeaders: false,
+
+    message: {
+        error: "Слишком много попыток. Попробуйте позже.",
+    },
 });
 
-/* ================= AUTH ================= */
+// ============================================================
+// HELPERS
+// ============================================================
 
-function createToken(id) {
-  return jwt.sign(
-    { id },
-    JWT_SECRET,
-    { expiresIn: "7d" }
-  );
-}
-
-function auth(req, res, next) {
-  const header =
-    req.headers.authorization || "";
-
-  if (!header.startsWith("Bearer ")) {
-    return res.status(401).json({
-      error: "Не авторизован"
-    });
-  }
-
-  try {
-    req.user = jwt.verify(
-      header.substring(7),
-      JWT_SECRET
+function createToken(user) {
+    return jwt.sign(
+        {
+            id: user.id,
+            username: user.username,
+        },
+        JWT_SECRET,
+        {
+            expiresIn: "7d",
+        }
     );
-
-    next();
-  } catch {
-    res.status(401).json({
-      error: "Сессия истекла"
-    });
-  }
 }
 
-function getChat(chatId, userId) {
-  return db.prepare(`
-    SELECT *
-    FROM chats
-    WHERE id = ?
-      AND (user1 = ? OR user2 = ?)
-  `).get(
-    chatId,
-    userId,
-    userId
-  );
+function authMiddleware(req, res, next) {
+    try {
+        const header = req.headers.authorization;
+
+        if (!header || !header.startsWith("Bearer ")) {
+            return res.status(401).json({
+                error: "Необходима авторизация",
+            });
+        }
+
+        const token = header.substring(7);
+
+        const payload = jwt.verify(token, JWT_SECRET);
+
+        req.user = payload;
+
+        next();
+    } catch (error) {
+        return res.status(401).json({
+            error: "Недействительный или просроченный токен",
+        });
+    }
 }
 
-/* ================= REGISTER ================= */
+function normalizeUsername(username) {
+    return String(username || "")
+        .trim()
+        .replace(/\s+/g, "");
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+function getUserById(id) {
+    return db
+        .prepare(
+            `
+            SELECT id, username, created_at
+            FROM users
+            WHERE id = ?
+            `
+        )
+        .get(id);
+}
+
+function getChatForUsers(userA, userB) {
+    const a = Math.min(userA, userB);
+    const b = Math.max(userA, userB);
+
+    return db
+        .prepare(
+            `
+            SELECT *
+            FROM chats
+            WHERE user1_id = ?
+              AND user2_id = ?
+            `
+        )
+        .get(a, b);
+}
+
+function userIsInChat(userId, chatId) {
+    return db
+        .prepare(
+            `
+            SELECT id
+            FROM chats
+            WHERE id = ?
+              AND (user1_id = ? OR user2_id = ?)
+            `
+        )
+        .get(chatId, userId, userId);
+}
+
+// ============================================================
+// REGISTER
+// ============================================================
 
 app.post(
-  "/api/register",
-  authLimit,
-  (req, res) => {
+    "/api/register",
+    authLimiter,
+    async (req, res) => {
+        try {
+            let { username, password } = req.body;
 
-    const username =
-      String(req.body.username || "").trim();
+            username = normalizeUsername(username);
+            password = String(password || "");
 
-    const password =
-      String(req.body.password || "");
+            if (username.length < 3 || username.length > 24) {
+                return res.status(400).json({
+                    error:
+                        "Имя пользователя должно содержать от 3 до 24 символов.",
+                });
+            }
 
-    if (
-      !/^[a-zA-Z0-9_]{3,20}$/.test(username)
-    ) {
-      return res.status(400).json({
-        error:
-          "Логин: 3–20 символов, только буквы, цифры и _"
-      });
+            if (!/^[a-zA-Zа-яА-ЯёЁ0-9_]+$/.test(username)) {
+                return res.status(400).json({
+                    error:
+                        "В имени можно использовать буквы, цифры и _.",
+                });
+            }
+
+            if (password.length < 6 || password.length > 128) {
+                return res.status(400).json({
+                    error:
+                        "Пароль должен содержать от 6 до 128 символов.",
+                });
+            }
+
+            const existing = db
+                .prepare(
+                    `
+                    SELECT id
+                    FROM users
+                    WHERE username = ? COLLATE NOCASE
+                    `
+                )
+                .get(username);
+
+            if (existing) {
+                return res.status(409).json({
+                    error: "Такой пользователь уже существует.",
+                });
+            }
+
+            const passwordHash = await bcrypt.hash(
+                password,
+                10
+            );
+
+            const result = db
+                .prepare(
+                    `
+                    INSERT INTO users
+                    (username, password_hash, created_at)
+                    VALUES (?, ?, ?)
+                    `
+                )
+                .run(
+                    username,
+                    passwordHash,
+                    Date.now()
+                );
+
+            const user = getUserById(result.lastInsertRowid);
+
+            const token = createToken(user);
+
+            return res.json({
+                ok: true,
+                token,
+                user,
+            });
+        } catch (error) {
+            console.error("REGISTER ERROR:", error);
+
+            return res.status(500).json({
+                error: "Ошибка сервера.",
+            });
+        }
     }
-
-    if (
-      password.length < 6 ||
-      password.length > 100
-    ) {
-      return res.status(400).json({
-        error:
-          "Пароль должен быть от 6 до 100 символов"
-      });
-    }
-
-    const exists = db
-      .prepare(
-        "SELECT id FROM users WHERE username = ?"
-      )
-      .get(username);
-
-    if (exists) {
-      return res.status(409).json({
-        error: "Такой пользователь уже существует"
-      });
-    }
-
-    const hash =
-      bcrypt.hashSync(password, 10);
-
-    const result = db.prepare(`
-      INSERT INTO users
-      (username, password, created_at)
-      VALUES (?, ?, ?)
-    `).run(
-      username,
-      hash,
-      Date.now()
-    );
-
-    const user = {
-      id: Number(result.lastInsertRowid),
-      username
-    };
-
-    res.json({
-      token: createToken(user.id),
-      user
-    });
-  }
 );
 
-/* ================= LOGIN ================= */
+// ============================================================
+// LOGIN
+// ============================================================
 
 app.post(
-  "/api/login",
-  authLimit,
-  (req, res) => {
+    "/api/login",
+    authLimiter,
+    async (req, res) => {
+        try {
+            let { username, password } = req.body;
 
-    const username =
-      String(req.body.username || "").trim();
+            username = normalizeUsername(username);
+            password = String(password || "");
 
-    const password =
-      String(req.body.password || "");
+            const user = db
+                .prepare(
+                    `
+                    SELECT *
+                    FROM users
+                    WHERE username = ? COLLATE NOCASE
+                    `
+                )
+                .get(username);
 
-    const user = db
-      .prepare(
-        "SELECT * FROM users WHERE username = ?"
-      )
-      .get(username);
+            if (!user) {
+                return res.status(401).json({
+                    error: "Неверный логин или пароль.",
+                });
+            }
 
-    if (
-      !user ||
-      !bcrypt.compareSync(
-        password,
-        user.password
-      )
-    ) {
-      return res.status(401).json({
-        error: "Неверный логин или пароль"
-      });
+            const valid = await bcrypt.compare(
+                password,
+                user.password_hash
+            );
+
+            if (!valid) {
+                return res.status(401).json({
+                    error: "Неверный логин или пароль.",
+                });
+            }
+
+            const publicUser = {
+                id: user.id,
+                username: user.username,
+                created_at: user.created_at,
+            };
+
+            const token = createToken(publicUser);
+
+            return res.json({
+                ok: true,
+                token,
+                user: publicUser,
+            });
+        } catch (error) {
+            console.error("LOGIN ERROR:", error);
+
+            return res.status(500).json({
+                error: "Ошибка сервера.",
+            });
+        }
     }
-
-    res.json({
-      token: createToken(user.id),
-      user: {
-        id: user.id,
-        username: user.username
-      }
-    });
-  }
 );
 
-/* ================= ME ================= */
-
-app.get("/api/me", auth, (req, res) => {
-
-  const user = db
-    .prepare(`
-      SELECT id, username
-      FROM users
-      WHERE id = ?
-    `)
-    .get(req.user.id);
-
-  if (!user) {
-    return res.status(404).json({
-      error: "Пользователь не найден"
-    });
-  }
-
-  res.json(user);
-});
-
-/* ================= SEARCH ================= */
-
-app.get("/api/users", auth, (req, res) => {
-
-  const q =
-    String(req.query.q || "").trim();
-
-  if (!q) {
-    return res.json([]);
-  }
-
-  const users = db
-    .prepare(`
-      SELECT id, username
-      FROM users
-      WHERE username LIKE ?
-        AND id != ?
-      ORDER BY username
-      LIMIT 20
-    `)
-    .all(
-      "%" + q + "%",
-      req.user.id
-    );
-
-  res.json(users);
-});
-
-/* ================= CHATS ================= */
-
-app.get("/api/chats", auth, (req, res) => {
-
-  const chats = db
-    .prepare(`
-      SELECT
-        c.id,
-        c.created_at,
-        u.id AS user_id,
-        u.username,
-
-        (
-          SELECT text
-          FROM messages m
-          WHERE m.chat_id = c.id
-          ORDER BY m.id DESC
-          LIMIT 1
-        ) AS last_text,
-
-        (
-          SELECT created_at
-          FROM messages m
-          WHERE m.chat_id = c.id
-          ORDER BY m.id DESC
-          LIMIT 1
-        ) AS last_time
-
-      FROM chats c
-
-      JOIN users u
-      ON u.id =
-        CASE
-          WHEN c.user1 = ?
-          THEN c.user2
-          ELSE c.user1
-        END
-
-      WHERE c.user1 = ?
-         OR c.user2 = ?
-
-      ORDER BY
-        COALESCE(last_time, c.created_at) DESC
-    `)
-    .all(
-      req.user.id,
-      req.user.id,
-      req.user.id
-    );
-
-  res.json(chats);
-});
-
-/* ================= CREATE CHAT ================= */
-
-app.post("/api/chats", auth, (req, res) => {
-
-  const otherId =
-    Number(req.body.userId);
-
-  if (
-    !Number.isInteger(otherId) ||
-    otherId === req.user.id
-  ) {
-    return res.status(400).json({
-      error: "Неверный пользователь"
-    });
-  }
-
-  const other = db
-    .prepare(`
-      SELECT id, username
-      FROM users
-      WHERE id = ?
-    `)
-    .get(otherId);
-
-  if (!other) {
-    return res.status(404).json({
-      error: "Пользователь не найден"
-    });
-  }
-
-  const user1 =
-    Math.min(req.user.id, otherId);
-
-  const user2 =
-    Math.max(req.user.id, otherId);
-
-  let chat = db
-    .prepare(`
-      SELECT *
-      FROM chats
-      WHERE user1 = ?
-        AND user2 = ?
-    `)
-    .get(
-      user1,
-      user2
-    );
-
-  if (!chat) {
-
-    const result = db.prepare(`
-      INSERT INTO chats
-      (user1, user2, created_at)
-      VALUES (?, ?, ?)
-    `).run(
-      user1,
-      user2,
-      Date.now()
-    );
-
-    chat = {
-      id: Number(result.lastInsertRowid)
-    };
-  }
-
-  res.json({
-    id: chat.id,
-    user: other
-  });
-});
-
-/* ================= MESSAGES ================= */
+// ============================================================
+// CURRENT USER
+// ============================================================
 
 app.get(
-  "/api/chats/:id/messages",
-  auth,
-  (req, res) => {
+    "/api/me",
+    authMiddleware,
+    (req, res) => {
+        const user = getUserById(req.user.id);
 
-    const chatId =
-      Number(req.params.id);
+        if (!user) {
+            return res.status(404).json({
+                error: "Пользователь не найден.",
+            });
+        }
 
-    if (
-      !getChat(
-        chatId,
-        req.user.id
-      )
-    ) {
-      return res.status(404).json({
-        error: "Чат не найден"
-      });
+        res.json({
+            user,
+        });
     }
-
-    const messages = db
-      .prepare(`
-        SELECT
-          m.id,
-          m.chat_id,
-          m.sender_id,
-          m.text,
-          m.created_at,
-          u.username
-
-        FROM messages m
-
-        JOIN users u
-        ON u.id = m.sender_id
-
-        WHERE m.chat_id = ?
-
-        ORDER BY m.id ASC
-
-        LIMIT 200
-      `)
-      .all(chatId);
-
-    res.json(messages);
-  }
 );
 
-/* ================= FRONTEND ================= */
+// ============================================================
+// SEARCH USERS
+// ============================================================
+
+app.get(
+    "/api/users",
+    authMiddleware,
+    (req, res) => {
+        try {
+            const q = String(req.query.q || "")
+                .trim()
+                .slice(0, 30);
+
+            if (!q) {
+                return res.json({
+                    users: [],
+                });
+            }
+
+            const users = db
+                .prepare(
+                    `
+                    SELECT
+                        id,
+                        username,
+                        created_at
+                    FROM users
+                    WHERE username LIKE ?
+                      AND id != ?
+                    ORDER BY username
+                    LIMIT 20
+                    `
+                )
+                .all(
+                    `%${q}%`,
+                    req.user.id
+                );
+
+            res.json({
+                users,
+            });
+        } catch (error) {
+            console.error("SEARCH ERROR:", error);
+
+            res.status(500).json({
+                error: "Ошибка сервера.",
+            });
+        }
+    }
+);
+
+// ============================================================
+// GET CHATS
+// ============================================================
+
+app.get(
+    "/api/chats",
+    authMiddleware,
+    (req, res) => {
+        try {
+            const chats = db
+                .prepare(
+                    `
+                    SELECT
+                        c.id,
+                        c.created_at,
+
+                        CASE
+                            WHEN c.user1_id = @userId
+                            THEN u2.id
+                            ELSE u1.id
+                        END AS other_id,
+
+                        CASE
+                            WHEN c.user1_id = @userId
+                            THEN u2.username
+                            ELSE u1.username
+                        END AS other_username
+
+                    FROM chats c
+
+                    JOIN users u1
+                        ON u1.id = c.user1_id
+
+                    JOIN users u2
+                        ON u2.id = c.user2_id
+
+                    WHERE
+                        c.user1_id = @userId
+                        OR
+                        c.user2_id = @userId
+
+                    ORDER BY c.id DESC
+                    `
+                )
+                .all({
+                    userId: req.user.id,
+                });
+
+            res.json({
+                chats,
+            });
+        } catch (error) {
+            console.error("GET CHATS ERROR:", error);
+
+            res.status(500).json({
+                error: "Ошибка сервера.",
+            });
+        }
+    }
+);
+
+// ============================================================
+// CREATE / GET CHAT
+// ============================================================
+
+app.post(
+    "/api/chats",
+    authMiddleware,
+    (req, res) => {
+        try {
+            const otherUserId = Number(
+                req.body.userId
+            );
+
+            if (!Number.isInteger(otherUserId)) {
+                return res.status(400).json({
+                    error: "Неверный пользователь.",
+                });
+            }
+
+            if (otherUserId === req.user.id) {
+                return res.status(400).json({
+                    error:
+                        "Нельзя создать чат с самим собой.",
+                });
+            }
+
+            const otherUser = getUserById(
+                otherUserId
+            );
+
+            if (!otherUser) {
+                return res.status(404).json({
+                    error:
+                        "Пользователь не найден.",
+                });
+            }
+
+            let chat = getChatForUsers(
+                req.user.id,
+                otherUserId
+            );
+
+            if (!chat) {
+                const user1 = Math.min(
+                    req.user.id,
+                    otherUserId
+                );
+
+                const user2 = Math.max(
+                    req.user.id,
+                    otherUserId
+                );
+
+                const result = db
+                    .prepare(
+                        `
+                        INSERT INTO chats
+                        (
+                            user1_id,
+                            user2_id,
+                            created_at
+                        )
+                        VALUES (?, ?, ?)
+                        `
+                    )
+                    .run(
+                        user1,
+                        user2,
+                        Date.now()
+                    );
+
+                chat = db
+                    .prepare(
+                        `
+                        SELECT *
+                        FROM chats
+                        WHERE id = ?
+                        `
+                    )
+                    .get(
+                        result.lastInsertRowid
+                    );
+            }
+
+            res.json({
+                ok: true,
+                chat: {
+                    id: chat.id,
+                    other_id: otherUser.id,
+                    other_username:
+                        otherUser.username,
+                },
+            });
+        } catch (error) {
+            console.error(
+                "CREATE CHAT ERROR:",
+                error
+            );
+
+            res.status(500).json({
+                error: "Ошибка сервера.",
+            });
+        }
+    }
+);
+
+// ============================================================
+// GET MESSAGES
+// ============================================================
+
+app.get(
+    "/api/chats/:id/messages",
+    authMiddleware,
+    (req, res) => {
+        try {
+            const chatId = Number(
+                req.params.id
+            );
+
+            if (!Number.isInteger(chatId)) {
+                return res.status(400).json({
+                    error: "Неверный ID чата.",
+                });
+            }
+
+            if (
+                !userIsInChat(
+                    req.user.id,
+                    chatId
+                )
+            ) {
+                return res.status(403).json({
+                    error: "Нет доступа к этому чату.",
+                });
+            }
+
+            const messages = db
+                .prepare(
+                    `
+                    SELECT
+                        m.id,
+                        m.chat_id,
+                        m.sender_id,
+                        m.text,
+                        m.created_at,
+                        u.username AS sender_username
+
+                    FROM messages m
+
+                    JOIN users u
+                        ON u.id = m.sender_id
+
+                    WHERE m.chat_id = ?
+
+                    ORDER BY m.id ASC
+
+                    LIMIT 200
+                    `
+                )
+                .all(chatId);
+
+            res.json({
+                messages,
+            });
+        } catch (error) {
+            console.error(
+                "GET MESSAGES ERROR:",
+                error
+            );
+
+            res.status(500).json({
+                error: "Ошибка сервера.",
+            });
+        }
+    }
+);
+
+// ============================================================
+// FRONTEND
+// ============================================================
 
 const HTML = `<!DOCTYPE html>
 <html lang="ru">
 
 <head>
-
 <meta charset="UTF-8">
 
 <meta
-  name="viewport"
-  content="width=device-width,initial-scale=1"
->
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+/>
 
 <title>M-Talk</title>
 
 <style>
 
 * {
-  box-sizing: border-box;
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
 }
 
 body {
-  margin: 0;
-  font-family: Arial, sans-serif;
-  background: #e9eef5;
-  color: #17212b;
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+
+    background:
+        linear-gradient(
+            135deg,
+            #10131a,
+            #171c27
+        );
+
+    color: #fff;
 }
 
 button,
 input {
-  font: inherit;
+    font: inherit;
 }
 
 button {
-  border: 0;
-  border-radius: 10px;
-  cursor: pointer;
+    cursor: pointer;
 }
 
 .hidden {
-  display: none !important;
+    display: none !important;
 }
 
 /* AUTH */
 
-.auth {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
+.auth-screen {
+    min-height: 100vh;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    padding: 20px;
 }
 
-.card {
-  width: min(400px, 100%);
-  background: white;
-  padding: 25px;
-  border-radius: 20px;
-  box-shadow: 0 10px 40px #0002;
+.auth-box {
+    width: 100%;
+    max-width: 420px;
+
+    padding: 30px;
+
+    border-radius: 22px;
+
+    background:
+        rgba(25, 29, 39, 0.95);
+
+    box-shadow:
+        0 20px 70px
+        rgba(0, 0, 0, .45);
 }
 
-.card h1 {
-  margin-top: 0;
+.logo {
+    text-align: center;
+
+    font-size: 38px;
+    font-weight: 800;
+
+    margin-bottom: 8px;
 }
 
-.card input {
-  display: block;
-  width: 100%;
-  padding: 13px;
-  margin: 8px 0;
-  border: 1px solid #ccd5df;
-  border-radius: 10px;
-  outline: none;
+.subtitle {
+    text-align: center;
+
+    color: #9da6b7;
+
+    margin-bottom: 28px;
 }
 
-.card input:focus {
-  border-color: #2aabee;
+.input {
+    width: 100%;
+
+    padding: 14px 15px;
+
+    margin-bottom: 12px;
+
+    border: 1px solid #333b4d;
+
+    border-radius: 13px;
+
+    outline: none;
+
+    color: white;
+
+    background: #11151d;
 }
 
-.mainButton {
-  width: 100%;
-  padding: 13px;
-  margin-top: 8px;
-  background: #2aabee;
-  color: white;
+.input:focus {
+    border-color: #5d8cff;
 }
 
-.error {
-  min-height: 22px;
-  margin-top: 8px;
-  color: #e53935;
+.btn {
+    width: 100%;
+
+    padding: 14px;
+
+    border: 0;
+
+    border-radius: 13px;
+
+    color: white;
+
+    background: #4f7cff;
+
+    font-weight: 700;
+
+    margin-top: 5px;
+}
+
+.btn:hover {
+    background: #628bff;
 }
 
 .switch {
-  text-align: center;
-  margin-top: 15px;
-  color: #718096;
+    text-align: center;
+
+    margin-top: 18px;
+
+    color: #9da6b7;
 }
 
-.switch a {
-  color: #168acd;
-  cursor: pointer;
+.switch span {
+    color: #6d96ff;
+
+    cursor: pointer;
+}
+
+.error {
+    margin-top: 12px;
+
+    text-align: center;
+
+    color: #ff7373;
 }
 
 /* APP */
 
 .app {
-  height: 100vh;
-  display: flex;
+    width: 100%;
+    height: 100vh;
+
+    display: flex;
+
+    overflow: hidden;
 }
 
 .sidebar {
-  width: 320px;
-  background: white;
-  border-right: 1px solid #ddd;
-  display: flex;
-  flex-direction: column;
+    width: 330px;
+
+    flex-shrink: 0;
+
+    border-right: 1px solid #2b3241;
+
+    background: #11151d;
+
+    display: flex;
+
+    flex-direction: column;
 }
 
-.logo {
-  padding: 16px;
-  font-size: 21px;
-  font-weight: bold;
-  border-bottom: 1px solid #eee;
+.sidebar-head {
+    padding: 20px;
+
+    border-bottom: 1px solid #2b3241;
+}
+
+.sidebar-title {
+    font-size: 25px;
+
+    font-weight: 800;
+}
+
+.me {
+    color: #8994a9;
+
+    font-size: 13px;
+
+    margin-top: 5px;
 }
 
 .search {
-  position: relative;
-  padding: 10px;
+    padding: 12px;
 }
 
-.search input {
-  width: 100%;
-  padding: 11px;
-  border: 1px solid #ddd;
-  border-radius: 10px;
-  outline: none;
-}
+.chat-list {
+    overflow-y: auto;
 
-.results {
-  position: absolute;
-  z-index: 10;
-  left: 10px;
-  right: 10px;
-  top: 60px;
-  background: white;
-  border: 1px solid #ddd;
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.result {
-  padding: 12px;
-  cursor: pointer;
-}
-
-.result:hover {
-  background: #eef7ff;
-}
-
-.chats {
-  flex: 1;
-  overflow-y: auto;
+    flex: 1;
 }
 
 .chat {
-  padding: 13px 16px;
-  border-bottom: 1px solid #f0f0f0;
-  cursor: pointer;
+    padding: 15px 18px;
+
+    border-bottom: 1px solid #202633;
+
+    cursor: pointer;
 }
 
-.chat:hover,
+.chat:hover {
+    background: #191f2b;
+}
+
 .chat.active {
-  background: #eef7ff;
+    background: #20293a;
 }
 
-.username {
-  font-weight: bold;
+.chat-name {
+    font-weight: 700;
 }
 
-.preview {
-  color: #718096;
-  font-size: 13px;
-  margin-top: 4px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
+.chat-id {
+    color: #7f8aa0;
 
-/* CHAT */
+    font-size: 12px;
+
+    margin-top: 4px;
+}
 
 .main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
+    flex: 1;
+
+    min-width: 0;
+
+    display: flex;
+
+    flex-direction: column;
 }
 
-.header {
-  background: white;
-  padding: 14px 18px;
-  border-bottom: 1px solid #ddd;
-  font-weight: bold;
+.chat-head {
+    min-height: 72px;
+
+    display: flex;
+
+    align-items: center;
+
+    padding: 15px 20px;
+
+    border-bottom: 1px solid #2b3241;
+
+    background: #151a23;
 }
 
-.back {
-  display: none;
-  margin-right: 8px;
-  padding: 6px 10px;
-  background: #eee;
+.chat-title {
+    font-weight: 800;
+
+    font-size: 18px;
 }
 
 .messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
+    flex: 1;
 
-.empty {
-  margin: auto;
-  text-align: center;
-  color: #718096;
+    overflow-y: auto;
+
+    padding: 20px;
 }
 
 .message {
-  max-width: 70%;
-  padding: 9px 12px;
-  background: white;
-  border-radius: 14px;
-  align-self: flex-start;
-  word-break: break-word;
+    max-width: 75%;
+
+    margin-bottom: 12px;
+
+    padding: 10px 13px;
+
+    border-radius: 15px;
+
+    background: #202735;
+
+    word-wrap: break-word;
 }
 
 .message.mine {
-  background: #cfeeff;
-  align-self: flex-end;
+    margin-left: auto;
+
+    background: #426bd3;
 }
 
-.time {
-  margin-top: 3px;
-  font-size: 10px;
-  color: #718096;
-  text-align: right;
+.message-user {
+    font-size: 11px;
+
+    opacity: .7;
+
+    margin-bottom: 4px;
+}
+
+.message-time {
+    font-size: 10px;
+
+    opacity: .55;
+
+    margin-top: 5px;
+
+    text-align: right;
+}
+
+.composer {
+    display: flex;
+
+    gap: 10px;
+
+    padding: 14px;
+
+    border-top: 1px solid #2b3241;
+
+    background: #151a23;
+}
+
+.composer input {
+    flex: 1;
+
+    min-width: 0;
+
+    padding: 13px 15px;
+
+    border: 1px solid #343c4c;
+
+    border-radius: 13px;
+
+    background: #10141b;
+
+    color: white;
+
+    outline: none;
 }
 
 .send {
-  display: flex;
-  gap: 8px;
-  padding: 10px;
-  background: white;
+    width: 52px;
+
+    border: 0;
+
+    border-radius: 13px;
+
+    background: #4f7cff;
+
+    color: white;
+
+    font-size: 20px;
 }
 
-.send input {
-  flex: 1;
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid #ddd;
-  border-radius: 12px;
-  outline: none;
-}
+.empty {
+    height: 100%;
 
-.send button {
-  width: 50px;
-  background: #2aabee;
-  color: white;
-}
-
-@media(max-width:700px) {
-
-  .sidebar {
-    width: 100%;
-  }
-
-  .main {
-    display: none;
-  }
-
-  .app.chat-open .sidebar {
-    display: none;
-  }
-
-  .app.chat-open .main {
     display: flex;
-  }
 
-  .back {
-    display: inline-block;
-  }
+    align-items: center;
 
-  .message {
-    max-width: 85%;
-  }
+    justify-content: center;
+
+    color: #788398;
+
+    text-align: center;
+
+    padding: 20px;
+}
+
+.logout {
+    margin-top: 12px;
+
+    padding: 9px 12px;
+
+    border: 1px solid #343c4c;
+
+    border-radius: 10px;
+
+    background: transparent;
+
+    color: #b6bfce;
+}
+
+.logout:hover {
+    background: #202632;
+}
+
+/* MOBILE */
+
+@media (max-width: 700px) {
+
+    .sidebar {
+        width: 100%;
+    }
+
+    .main {
+        display: none;
+    }
+
+    .app.chat-open .sidebar {
+        display: none;
+    }
+
+    .app.chat-open .main {
+        display: flex;
+    }
+
+    .mobile-back {
+        display: block !important;
+    }
+}
+
+.mobile-back {
+    display: none;
+
+    margin-right: 12px;
+
+    border: 0;
+
+    background: transparent;
+
+    color: white;
+
+    font-size: 22px;
 }
 
 </style>
-
 </head>
 
 <body>
 
-<!-- AUTH -->
+<div id="authScreen" class="auth-screen">
 
-<div id="auth" class="auth">
+    <div class="auth-box">
 
-  <div class="card">
+        <div class="logo">
+            M-Talk
+        </div>
 
-    <h1>💬 M-Talk</h1>
+        <div class="subtitle">
+            Интернет-мессенджер
+        </div>
 
-    <div id="authTitle">
-      Вход
+        <div id="loginForm">
+
+            <input
+                id="loginUsername"
+                class="input"
+                placeholder="Имя пользователя"
+                autocomplete="username"
+            >
+
+            <input
+                id="loginPassword"
+                class="input"
+                type="password"
+                placeholder="Пароль"
+                autocomplete="current-password"
+            >
+
+            <button
+                class="btn"
+                onclick="login()"
+            >
+                Войти
+            </button>
+
+            <div class="switch">
+                Нет аккаунта?
+                <span onclick="showRegister()">
+                    Регистрация
+                </span>
+            </div>
+
+        </div>
+
+        <div id="registerForm" class="hidden">
+
+            <input
+                id="registerUsername"
+                class="input"
+                placeholder="Имя пользователя"
+                autocomplete="username"
+            >
+
+            <input
+                id="registerPassword"
+                class="input"
+                type="password"
+                placeholder="Пароль"
+                autocomplete="new-password"
+            >
+
+            <button
+                class="btn"
+                onclick="register()"
+            >
+                Создать аккаунт
+            </button>
+
+            <div class="switch">
+                Уже есть аккаунт?
+                <span onclick="showLogin()">
+                    Войти
+                </span>
+            </div>
+
+        </div>
+
+        <div id="authError" class="error"></div>
+
     </div>
-
-    <input
-      id="username"
-      placeholder="Логин"
-      autocomplete="username"
-    >
-
-    <input
-      id="password"
-      type="password"
-      placeholder="Пароль"
-      autocomplete="current-password"
-    >
-
-    <button
-      id="authButton"
-      class="mainButton"
-    >
-      Войти
-    </button>
-
-    <div id="authError" class="error"></div>
-
-    <div class="switch">
-
-      <span id="switchText">
-        Нет аккаунта?
-      </span>
-
-      <a id="switchButton">
-        Регистрация
-      </a>
-
-    </div>
-
-  </div>
 
 </div>
 
-<!-- APP -->
 
 <div id="app" class="app hidden">
 
-  <aside class="sidebar">
+    <aside class="sidebar">
 
-    <div class="logo">
-      💬 M-Talk
-    </div>
+        <div class="sidebar-head">
 
-    <div class="search">
+            <div class="sidebar-title">
+                M-Talk
+            </div>
 
-      <input
-        id="search"
-        placeholder="Найти пользователя..."
-      >
+            <div id="me" class="me"></div>
 
-      <div
-        id="results"
-        class="results hidden"
-      ></div>
+            <button
+                class="logout"
+                onclick="logout()"
+            >
+                Выйти
+            </button>
 
-    </div>
+        </div>
 
-    <div
-      id="chats"
-      class="chats"
-    ></div>
+        <div class="search">
 
-  </aside>
+            <input
+                id="searchInput"
+                class="input"
+                placeholder="Найти пользователя..."
+                oninput="searchUsers()"
+            >
 
-  <main class="main">
+        </div>
 
-    <div class="header">
+        <div
+            id="chatList"
+            class="chat-list"
+        ></div>
 
-      <button
-        id="back"
-        class="back"
-      >
-        ←
-      </button>
+    </aside>
 
-      <span id="chatName">
-        Выберите чат
-      </span>
 
-    </div>
+    <main class="main">
 
-    <div
-      id="messages"
-      class="messages"
-    >
+        <div class="chat-head">
 
-      <div class="empty">
-        Выберите чат
-      </div>
+            <button
+                class="mobile-back"
+                onclick="closeChat()"
+            >
+                ←
+            </button>
 
-    </div>
+            <div
+                id="chatTitle"
+                class="chat-title"
+            >
+                Выберите чат
+            </div>
 
-    <div class="send">
+        </div>
 
-      <input
-        id="messageInput"
-        placeholder="Сообщение..."
-        disabled
-      >
+        <div
+            id="messages"
+            class="messages"
+        >
+            <div class="empty">
+                Выберите пользователя,
+                чтобы начать общение.
+            </div>
+        </div>
 
-      <button
-        id="sendButton"
-        disabled
-      >
-        ➤
-      </button>
+        <div class="composer">
 
-    </div>
+            <input
+                id="messageInput"
+                placeholder="Введите сообщение..."
+                onkeydown="messageKey(event)"
+                disabled
+            >
 
-  </main>
+            <button
+                id="sendButton"
+                class="send"
+                onclick="sendMessage()"
+                disabled
+            >
+                ➤
+            </button>
+
+        </div>
+
+    </main>
 
 </div>
+
 
 <script src="/socket.io/socket.io.js"></script>
 
 <script>
 
-let token =
-  localStorage.getItem("mtalk_token");
-
-let me = null;
-let socket = null;
+let token = localStorage.getItem("mtalk_token");
+let currentUser = null;
 let currentChat = null;
-let registration = false;
+let socket = null;
 
-const $ = id =>
-  document.getElementById(id);
 
-/* ESCAPE */
+// ============================================================
+// API
+// ============================================================
 
-function escapeHTML(value) {
+async function api(url, options = {}) {
 
-  return String(value).replace(
-    /[&<>"']/g,
-    function(char) {
+    const headers = {
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+    };
 
-      const map = {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;"
-      };
-
-      return map[char];
+    if (token) {
+        headers.Authorization =
+            "Bearer " + token;
     }
-  );
-}
 
-/* API */
-
-async function api(url, options) {
-
-  options = options || {};
-
-  options.headers =
-    Object.assign(
-      {
-        "Content-Type":
-          "application/json"
-      },
-      options.headers || {}
+    const response = await fetch(
+        url,
+        {
+            ...options,
+            headers
+        }
     );
 
-  if (token) {
-    options.headers.Authorization =
-      "Bearer " + token;
-  }
+    let data = {};
 
-  const response =
-    await fetch(url, options);
+    try {
+        data = await response.json();
+    } catch (e) {}
 
-  const data =
-    await response
-      .json()
-      .catch(function() {
-        return {
-          error: "Ошибка сервера"
-        };
-      });
+    if (!response.ok) {
+        throw new Error(
+            data.error ||
+            "Ошибка сервера"
+        );
+    }
 
-  if (!response.ok) {
-    throw new Error(
-      data.error || "Ошибка"
-    );
-  }
-
-  return data;
+    return data;
 }
 
-/* AUTH MODE */
 
-$("switchButton").onclick =
-function() {
+// ============================================================
+// AUTH UI
+// ============================================================
 
-  registration =
-    !registration;
+function showLogin() {
 
-  $("authTitle").textContent =
-    registration
-      ? "Регистрация"
-      : "Вход";
+    document
+        .getElementById("loginForm")
+        .classList.remove("hidden");
 
-  $("authButton").textContent =
-    registration
-      ? "Создать аккаунт"
-      : "Войти";
+    document
+        .getElementById("registerForm")
+        .classList.add("hidden");
 
-  $("switchButton").textContent =
-    registration
-      ? "Войти"
-      : "Регистрация";
+    clearAuthError();
+}
 
-  $("switchText").textContent =
-    registration
-      ? "Уже есть аккаунт?"
-      : "Нет аккаунта?";
+function showRegister() {
 
-  $("authError").textContent =
-    "";
-};
+    document
+        .getElementById("loginForm")
+        .classList.add("hidden");
 
-/* LOGIN / REGISTER */
+    document
+        .getElementById("registerForm")
+        .classList.remove("hidden");
 
-$("authButton").onclick =
-async function() {
+    clearAuthError();
+}
 
-  $("authError").textContent =
-    "Подождите...";
+function showAuthError(text) {
 
-  try {
+    document
+        .getElementById("authError")
+        .textContent = text;
+}
+
+function clearAuthError() {
+
+    document
+        .getElementById("authError")
+        .textContent = "";
+}
+
+
+// ============================================================
+// REGISTER
+// ============================================================
+
+async function register() {
+
+    clearAuthError();
 
     const username =
-      $("username").value.trim();
+        document
+            .getElementById(
+                "registerUsername"
+            )
+            .value;
 
     const password =
-      $("password").value;
+        document
+            .getElementById(
+                "registerPassword"
+            )
+            .value;
 
-    const result =
-      await api(
-        registration
-          ? "/api/register"
-          : "/api/login",
-        {
-          method: "POST",
+    try {
 
-          body: JSON.stringify({
-            username,
-            password
-          })
-        }
-      );
+        const data = await api(
+            "/api/register",
+            {
+                method: "POST",
 
-    token = result.token;
+                body: JSON.stringify({
+                    username,
+                    password
+                })
+            }
+        );
 
-    localStorage.setItem(
-      "mtalk_token",
-      token
+        token = data.token;
+
+        localStorage.setItem(
+            "mtalk_token",
+            token
+        );
+
+        await startApp();
+
+    } catch (error) {
+
+        showAuthError(
+            error.message
+        );
+    }
+}
+
+
+// ============================================================
+// LOGIN
+// ============================================================
+
+async function login() {
+
+    clearAuthError();
+
+    const username =
+        document
+            .getElementById(
+                "loginUsername"
+            )
+            .value;
+
+    const password =
+        document
+            .getElementById(
+                "loginPassword"
+            )
+            .value;
+
+    try {
+
+        const data = await api(
+            "/api/login",
+            {
+                method: "POST",
+
+                body: JSON.stringify({
+                    username,
+                    password
+                })
+            }
+        );
+
+        token = data.token;
+
+        localStorage.setItem(
+            "mtalk_token",
+            token
+        );
+
+        await startApp();
+
+    } catch (error) {
+
+        showAuthError(
+            error.message
+        );
+    }
+}
+
+
+// ============================================================
+// LOGOUT
+// ============================================================
+
+function logout() {
+
+    if (socket) {
+        socket.disconnect();
+        socket = null;
+    }
+
+    token = null;
+    currentUser = null;
+    currentChat = null;
+
+    localStorage.removeItem(
+        "mtalk_token"
     );
 
-    $("authError").textContent =
-      "";
+    document
+        .getElementById("app")
+        .classList.add("hidden");
 
-    await startApp();
+    document
+        .getElementById("authScreen")
+        .classList.remove("hidden");
 
-  } catch(error) {
+    showLogin();
+}
 
-    $("authError").textContent =
-      error.message;
 
-  }
-};
-
-$("password").onkeydown =
-function(event) {
-
-  if (event.key === "Enter") {
-    $("authButton").click();
-  }
-
-};
-
-/* START */
+// ============================================================
+// START APP
+// ============================================================
 
 async function startApp() {
 
-  try {
+    try {
 
-    me =
-      await api("/api/me");
+        const data =
+            await api("/api/me");
 
-    $("auth")
-      .classList
-      .add("hidden");
+        currentUser =
+            data.user;
 
-    $("app")
-      .classList
-      .remove("hidden");
+        document
+            .getElementById("authScreen")
+            .classList.add("hidden");
 
-    socket =
-      io({
-        auth: {
-          token: token
-        }
-      });
+        document
+            .getElementById("app")
+            .classList.remove("hidden");
 
-    socket.on(
-      "connect_error",
-      function() {
-        console.log(
-          "Socket connection error"
-        );
-      }
-    );
+        document
+            .getElementById("me")
+            .textContent =
+                "Вы: " +
+                currentUser.username;
 
-    socket.on(
-      "message",
-      function(message) {
+        connectSocket();
 
-        if (
-          currentChat &&
-          message.chat_id ===
-            currentChat.id
-        ) {
-          addMessage(message);
-        }
+        await loadChats();
 
-        loadChats();
-      }
-    );
+    } catch (error) {
 
-    await loadChats();
-
-  } catch(error) {
-
-    localStorage.removeItem(
-      "mtalk_token"
-    );
-
-    token = null;
-
-  }
+        logout();
+    }
 }
 
-/* CHATS */
+
+// ============================================================
+// SOCKET
+// ============================================================
+
+function connectSocket() {
+
+    if (socket) {
+        socket.disconnect();
+    }
+
+    socket = io({
+        auth: {
+            token
+        }
+    });
+
+    socket.on(
+        "connect",
+        () => {
+            if (currentChat) {
+                socket.emit(
+                    "joinChat",
+                    currentChat
+                );
+            }
+        }
+    );
+
+    socket.on(
+        "message",
+        message => {
+
+            if (
+                currentChat &&
+                Number(message.chat_id) ===
+                Number(currentChat)
+            ) {
+
+                addMessage(
+                    message
+                );
+            }
+        }
+    );
+
+    socket.on(
+        "connect_error",
+        error => {
+
+            console.error(
+                "Socket error:",
+                error.message
+            );
+        }
+    );
+}
+
+
+// ============================================================
+// CHATS
+// ============================================================
 
 async function loadChats() {
 
-  const chats =
-    await api("/api/chats");
+    const data =
+        await api("/api/chats");
 
-  if (!chats.length) {
-
-    $("chats").innerHTML =
-      '<div class="empty">Нет чатов</div>';
-
-    return;
-  }
-
-  $("chats").innerHTML =
-    chats
-      .map(function(chat) {
-
-        const active =
-          currentChat &&
-          currentChat.id === chat.id
-            ? "active"
-            : "";
-
-        return (
-          '<div class="chat ' +
-          active +
-          '" data-id="' +
-          chat.id +
-          '">' +
-
-          '<div class="username">' +
-          escapeHTML(
-            chat.username
-          ) +
-          "</div>" +
-
-          '<div class="preview">' +
-          escapeHTML(
-            chat.last_text ||
-            "Нет сообщений"
-          ) +
-          "</div>" +
-
-          "</div>"
+    const list =
+        document.getElementById(
+            "chatList"
         );
 
-      })
-      .join("");
+    list.innerHTML = "";
 
-  document
-    .querySelectorAll(".chat")
-    .forEach(function(element) {
+    if (!data.chats.length) {
 
-      element.onclick =
-        function() {
+        list.innerHTML =
+            '<div class="empty">' +
+            "Пока нет чатов.<br>" +
+            "Найдите пользователя сверху." +
+            "</div>";
 
-          openChat(
-            Number(
-              element.dataset.id
-            )
-          );
-
-        };
-
-    });
-}
-
-/* OPEN CHAT */
-
-async function openChat(chatId) {
-
-  const chats =
-    await api("/api/chats");
-
-  const chat =
-    chats.find(function(item) {
-      return item.id === chatId;
-    });
-
-  if (!chat) return;
-
-  currentChat = {
-    id: chat.id,
-    username: chat.username,
-    user_id: chat.user_id
-  };
-
-  $("chatName").textContent =
-    chat.username;
-
-  $("messageInput").disabled =
-    false;
-
-  $("sendButton").disabled =
-    false;
-
-  $("messages").innerHTML =
-    "";
-
-  const messages =
-    await api(
-      "/api/chats/" +
-      chatId +
-      "/messages"
-    );
-
-  messages.forEach(addMessage);
-
-  if (socket) {
-
-    socket.emit(
-      "joinChat",
-      chatId
-    );
-
-  }
-
-  $("app")
-    .classList
-    .add("chat-open");
-
-  await loadChats();
-}
-
-/* MESSAGE */
-
-function addMessage(message) {
-
-  const element =
-    document.createElement("div");
-
-  element.className =
-    "message" +
-    (
-      message.sender_id === me.id
-        ? " mine"
-        : ""
-    );
-
-  element.innerHTML =
-    escapeHTML(message.text) +
-
-    '<div class="time">' +
-
-    new Date(
-      message.created_at
-    ).toLocaleTimeString(
-      [],
-      {
-        hour: "2-digit",
-        minute: "2-digit"
-      }
-    ) +
-
-    "</div>";
-
-  $("messages")
-    .appendChild(element);
-
-  $("messages").scrollTop =
-    $("messages").scrollHeight;
-}
-
-/* SEND */
-
-function sendMessage() {
-
-  const text =
-    $("messageInput")
-      .value
-      .trim();
-
-  if (
-    !text ||
-    !currentChat ||
-    !socket
-  ) {
-    return;
-  }
-
-  socket.emit(
-    "sendMessage",
-    {
-      chatId: currentChat.id,
-      text: text
-    },
-    function(result) {
-
-      if (
-        result &&
-        result.error
-      ) {
-
-        alert(result.error);
         return;
-
-      }
-
-      $("messageInput").value =
-        "";
-
     }
-  );
+
+    for (const chat of data.chats) {
+
+        const div =
+            document.createElement(
+                "div"
+            );
+
+        div.className = "chat";
+
+        div.dataset.id =
+            chat.id;
+
+        div.innerHTML =
+            '<div class="chat-name">' +
+            escapeHtml(
+                chat.other_username
+            ) +
+            "</div>" +
+
+            '<div class="chat-id">' +
+            "Личный чат" +
+            "</div>";
+
+        div.onclick = () =>
+            openChat(
+                chat.id,
+                chat.other_username
+            );
+
+        list.appendChild(div);
+    }
 }
 
-$("sendButton").onclick =
-sendMessage;
 
-$("messageInput").onkeydown =
-function(event) {
-
-  if (event.key === "Enter") {
-    sendMessage();
-  }
-
-};
-
-/* BACK */
-
-$("back").onclick =
-function() {
-
-  $("app")
-    .classList
-    .remove("chat-open");
-
-  currentChat = null;
-
-  $("messageInput").disabled =
-    true;
-
-  $("sendButton").disabled =
-    true;
-
-  $("chatName").textContent =
-    "Выберите чат";
-
-};
-
-/* SEARCH */
+// ============================================================
+// SEARCH
+// ============================================================
 
 let searchTimer = null;
 
-$("search").oninput =
-function() {
-
-  clearTimeout(searchTimer);
-
-  searchTimer =
-    setTimeout(
-      searchUsers,
-      250
-    );
-};
-
 async function searchUsers() {
 
-  const query =
-    $("search").value.trim();
+    clearTimeout(searchTimer);
 
-  if (!query) {
+    searchTimer =
+        setTimeout(
+            async () => {
 
-    $("results")
-      .classList
-      .add("hidden");
+                const q =
+                    document
+                        .getElementById(
+                            "searchInput"
+                        )
+                        .value
+                        .trim();
 
-    return;
-  }
+                if (!q) {
 
-  try {
+                    await loadChats();
 
-    const users =
-      await api(
-        "/api/users?q=" +
-        encodeURIComponent(query)
-      );
+                    return;
+                }
 
-    if (!users.length) {
+                try {
 
-      $("results").innerHTML =
-        '<div class="result">' +
-        "Ничего не найдено" +
-        "</div>";
+                    const data =
+                        await api(
+                            "/api/users?q=" +
+                            encodeURIComponent(q)
+                        );
 
-    } else {
+                    const list =
+                        document
+                            .getElementById(
+                                "chatList"
+                            );
 
-      $("results").innerHTML =
-        users
-          .map(function(user) {
+                    list.innerHTML = "";
 
-            return (
-              '<div class="result" ' +
-              'data-user="' +
-              user.id +
-              '">' +
-              "👤 " +
-              escapeHTML(
-                user.username
-              ) +
-              "</div>"
-            );
+                    if (
+                        !data.users.length
+                    ) {
 
-          })
-          .join("");
+                        list.innerHTML =
+                            '<div class="empty">' +
+                            "Пользователи не найдены." +
+                            "</div>";
 
-      document
-        .querySelectorAll(
-          ".result[data-user]"
-        )
-        .forEach(function(element) {
+                        return;
+                    }
 
-          element.onclick =
-          async function() {
+                    for (
+                        const user
+                        of data.users
+                    ) {
 
-            try {
+                        const div =
+                            document.createElement(
+                                "div"
+                            );
 
-              const chat =
-                await api(
-                  "/api/chats",
-                  {
-                    method: "POST",
+                        div.className =
+                            "chat";
 
-                    body:
-                      JSON.stringify({
-                        userId:
-                          Number(
-                            element.dataset.user
-                          )
-                      })
-                  }
-                );
+                        div.innerHTML =
+                            '<div class="chat-name">' +
+                            escapeHtml(
+                                user.username
+                            ) +
+                            "</div>" +
 
-              $("search").value =
-                "";
+                            '<div class="chat-id">' +
+                            "Нажмите, чтобы открыть чат" +
+                            "</div>";
 
-              $("results")
-                .classList
-                .add("hidden");
+                        div.onclick =
+                            () =>
+                                createChat(
+                                    user.id,
+                                    user.username
+                                );
 
-              await loadChats();
+                        list.appendChild(
+                            div
+                        );
+                    }
 
-              await openChat(
-                chat.id
-              );
+                } catch (error) {
 
-            } catch(error) {
+                    console.error(
+                        error
+                    );
+                }
 
-              alert(
-                error.message
-              );
-
-            }
-
-          };
-
-        });
-    }
-
-    $("results")
-      .classList
-      .remove("hidden");
-
-  } catch(error) {
-
-    console.log(error);
-
-  }
+            },
+            250
+        );
 }
 
-document.onclick =
-function(event) {
 
-  if (
-    !event.target.closest(
-      ".search"
-    )
-  ) {
+// ============================================================
+// CREATE CHAT
+// ============================================================
 
-    $("results")
-      .classList
-      .add("hidden");
+async function createChat(
+    userId,
+    username
+) {
 
-  }
+    try {
 
-};
+        const data =
+            await api(
+                "/api/chats",
+                {
+                    method: "POST",
 
-/* AUTO LOGIN */
+                    body: JSON.stringify({
+                        userId
+                    })
+                }
+            );
+
+        document
+            .getElementById(
+                "searchInput"
+            )
+            .value = "";
+
+        await loadChats();
+
+        openChat(
+            data.chat.id,
+            username
+        );
+
+    } catch (error) {
+
+        alert(
+            error.message
+        );
+    }
+}
+
+
+// ============================================================
+// OPEN CHAT
+// ============================================================
+
+async function openChat(
+    chatId,
+    username
+) {
+
+    currentChat =
+        Number(chatId);
+
+    document
+        .getElementById(
+            "chatTitle"
+        )
+        .textContent =
+            username;
+
+    document
+        .getElementById(
+            "messageInput"
+        )
+        .disabled = false;
+
+    document
+        .getElementById(
+            "sendButton"
+        )
+        .disabled = false;
+
+    document
+        .getElementById(
+            "app"
+        )
+        .classList.add(
+            "chat-open"
+        );
+
+    if (socket) {
+
+        socket.emit(
+            "joinChat",
+            currentChat
+        );
+    }
+
+    const chatItems =
+        document.querySelectorAll(
+            ".chat"
+        );
+
+    chatItems.forEach(
+        item => {
+
+            item.classList.toggle(
+                "active",
+                Number(
+                    item.dataset.id
+                ) === currentChat
+            );
+        }
+    );
+
+    await loadMessages();
+}
+
+
+// ============================================================
+// CLOSE MOBILE CHAT
+// ============================================================
+
+function closeChat() {
+
+    document
+        .getElementById(
+            "app"
+        )
+        .classList.remove(
+            "chat-open"
+        );
+}
+
+
+// ============================================================
+// LOAD MESSAGES
+// ============================================================
+
+async function loadMessages() {
+
+    if (!currentChat) {
+        return;
+    }
+
+    try {
+
+        const data =
+            await api(
+                "/api/chats/" +
+                currentChat +
+                "/messages"
+            );
+
+        const box =
+            document.getElementById(
+                "messages"
+            );
+
+        box.innerHTML = "";
+
+        if (!data.messages.length) {
+
+            box.innerHTML =
+                '<div class="empty">' +
+                "Сообщений пока нет.<br>" +
+                "Напишите первым!" +
+                "</div>";
+
+            return;
+        }
+
+        for (
+            const message
+            of data.messages
+        ) {
+
+            addMessage(
+                message,
+                false
+            );
+        }
+
+        scrollMessages();
+
+    } catch (error) {
+
+        console.error(
+            error
+        );
+    }
+}
+
+
+// ============================================================
+// ADD MESSAGE
+// ============================================================
+
+function addMessage(
+    message,
+    scroll = true
+) {
+
+    const box =
+        document.getElementById(
+            "messages"
+        );
+
+    const empty =
+        box.querySelector(
+            ".empty"
+        );
+
+    if (empty) {
+        empty.remove();
+    }
+
+    // Не добавляем одно сообщение дважды
+    if (
+        box.querySelector(
+            '[data-message-id="' +
+            message.id +
+            '"]'
+        )
+    ) {
+        return;
+    }
+
+    const div =
+        document.createElement(
+            "div"
+        );
+
+    div.className =
+        "message";
+
+    div.dataset.messageId =
+        message.id;
+
+    if (
+        Number(message.sender_id) ===
+        Number(currentUser.id)
+    ) {
+
+        div.classList.add(
+            "mine"
+        );
+    }
+
+    const date =
+        new Date(
+            Number(
+                message.created_at
+            )
+        );
+
+    const time =
+        date.toLocaleTimeString(
+            "ru-RU",
+            {
+                hour: "2-digit",
+                minute: "2-digit"
+            }
+        );
+
+    div.innerHTML =
+        '<div class="message-user">' +
+        escapeHtml(
+            message.sender_username
+        ) +
+        "</div>" +
+
+        '<div class="message-text">' +
+        escapeHtml(
+            message.text
+        ) +
+        "</div>" +
+
+        '<div class="message-time">' +
+        time +
+        "</div>";
+
+    box.appendChild(
+        div
+    );
+
+    if (scroll) {
+        scrollMessages();
+    }
+}
+
+
+// ============================================================
+// SEND MESSAGE
+// ============================================================
+
+function sendMessage() {
+
+    if (!socket) {
+        return;
+    }
+
+    if (!currentChat) {
+        return;
+    }
+
+    const input =
+        document.getElementById(
+            "messageInput"
+        );
+
+    const text =
+        input.value.trim();
+
+    if (!text) {
+        return;
+    }
+
+    socket.emit(
+        "sendMessage",
+        {
+            chatId: currentChat,
+            text
+        }
+    );
+
+    input.value = "";
+
+    input.focus();
+}
+
+
+// ============================================================
+// ENTER
+// ============================================================
+
+function messageKey(event) {
+
+    if (
+        event.key === "Enter" &&
+        !event.shiftKey
+    ) {
+
+        event.preventDefault();
+
+        sendMessage();
+    }
+}
+
+
+// ============================================================
+// SCROLL
+// ============================================================
+
+function scrollMessages() {
+
+    const box =
+        document.getElementById(
+            "messages"
+        );
+
+    box.scrollTop =
+        box.scrollHeight;
+}
+
+
+// ============================================================
+// ESCAPE HTML
+// ============================================================
+
+function escapeHtml(text) {
+
+    const div =
+        document.createElement(
+            "div"
+        );
+
+    div.textContent =
+        text;
+
+    return div.innerHTML;
+}
+
+
+// ============================================================
+// START
+// ============================================================
 
 if (token) {
-  startApp();
+
+    startApp();
+
+} else {
+
+    showLogin();
 }
 
 </script>
@@ -1566,184 +2230,285 @@ if (token) {
 </body>
 </html>`;
 
-/* ================= PAGE ================= */
+// ============================================================
+// FRONTEND ROUTE
+// ============================================================
 
-app.get("/", function(req, res) {
-  res.type("html").send(HTML);
+app.get("/", (req, res) => {
+    res.type("html").send(HTML);
 });
 
-/* ================= SOCKET ================= */
+// ============================================================
+// SOCKET.IO AUTH
+// ============================================================
 
-io.use(function(socket, next) {
+io.use((socket, next) => {
 
-  try {
+    try {
 
-    const token =
-      socket.handshake.auth &&
-      socket.handshake.auth.token;
+        const token =
+            socket.handshake.auth &&
+            socket.handshake.auth.token;
 
-    socket.user =
-      jwt.verify(
-        token,
-        JWT_SECRET
-      );
-
-    next();
-
-  } catch(error) {
-
-    next(
-      new Error("Unauthorized")
-    );
-
-  }
-});
-
-io.on(
-  "connection",
-  function(socket) {
-
-    socket.on(
-      "joinChat",
-      function(chatId) {
-
-        chatId =
-          Number(chatId);
-
-        if (
-          getChat(
-            chatId,
-            socket.user.id
-          )
-        ) {
-
-          socket.join(
-            "chat:" + chatId
-          );
-
+        if (!token) {
+            return next(
+                new Error(
+                    "Необходима авторизация"
+                )
+            );
         }
 
-      }
-    );
+        const payload =
+            jwt.verify(
+                token,
+                JWT_SECRET
+            );
 
-    socket.on(
-      "sendMessage",
-      function(data, callback) {
+        socket.user = payload;
 
-        try {
+        next();
 
-          const chatId =
-            Number(data.chatId);
+    } catch (error) {
 
-          const text =
-            String(
-              data.text || ""
-            ).trim();
-
-          if (
-            !text ||
-            text.length > 2000
-          ) {
-
-            return callback({
-              error:
-                "Сообщение пустое или слишком длинное"
-            });
-
-          }
-
-          if (
-            !getChat(
-              chatId,
-              socket.user.id
+        next(
+            new Error(
+                "Недействительный токен"
             )
-          ) {
+        );
+    }
+});
 
-            return callback({
-              error:
-                "Нет доступа к этому чату"
-            });
+// ============================================================
+// SOCKET EVENTS
+// ============================================================
 
-          }
-
-          const createdAt =
-            Date.now();
-
-          const result =
-            db.prepare(`
-              INSERT INTO messages
-              (
-                chat_id,
-                sender_id,
-                text,
-                created_at
-              )
-              VALUES (?, ?, ?, ?)
-            `).run(
-              chatId,
-              socket.user.id,
-              text,
-              createdAt
-            );
-
-          const message = {
-            id:
-              Number(
-                result.lastInsertRowid
-              ),
-
-            chat_id:
-              chatId,
-
-            sender_id:
-              socket.user.id,
-
-            text:
-              text,
-
-            created_at:
-              createdAt
-          };
-
-          io
-            .to("chat:" + chatId)
-            .emit(
-              "message",
-              message
-            );
-
-          callback({
-            ok: true
-          });
-
-        } catch(error) {
-
-          console.error(error);
-
-          callback({
-            error:
-              "Ошибка отправки сообщения"
-          });
-
-        }
-
-      }
-    );
-
-  }
-);
-
-/* ================= START ================= */
-
-server.listen(
-  PORT,
-  "0.0.0.0",
-  function() {
+io.on("connection", (socket) => {
 
     console.log(
-      "M-Talk running on port " +
-      PORT
+        "Socket connected:",
+        socket.user.username
     );
 
-  }
+    socket.on(
+        "joinChat",
+        (chatId) => {
+
+            const id =
+                Number(chatId);
+
+            if (!Number.isInteger(id)) {
+                return;
+            }
+
+            if (
+                !userIsInChat(
+                    socket.user.id,
+                    id
+                )
+            ) {
+                return;
+            }
+
+            socket.join(
+                "chat_" + id
+            );
+        }
+    );
+
+
+    socket.on(
+        "sendMessage",
+        (data) => {
+
+            try {
+
+                const chatId =
+                    Number(
+                        data &&
+                        data.chatId
+                    );
+
+                const text =
+                    String(
+                        data &&
+                        data.text ||
+                        ""
+                    )
+                        .trim()
+                        .slice(0, 4000);
+
+                if (
+                    !Number.isInteger(
+                        chatId
+                    )
+                ) {
+                    return;
+                }
+
+                if (!text) {
+                    return;
+                }
+
+                if (
+                    !userIsInChat(
+                        socket.user.id,
+                        chatId
+                    )
+                ) {
+                    return;
+                }
+
+                const result =
+                    db
+                        .prepare(
+                            `
+                            INSERT INTO messages
+                            (
+                                chat_id,
+                                sender_id,
+                                text,
+                                created_at
+                            )
+                            VALUES (?, ?, ?, ?)
+                            `
+                        )
+                        .run(
+                            chatId,
+                            socket.user.id,
+                            text,
+                            Date.now()
+                        );
+
+                const message =
+                    db
+                        .prepare(
+                            `
+                            SELECT
+                                m.id,
+                                m.chat_id,
+                                m.sender_id,
+                                m.text,
+                                m.created_at,
+                                u.username
+                                    AS sender_username
+                            FROM messages m
+                            JOIN users u
+                                ON u.id =
+                                   m.sender_id
+                            WHERE m.id = ?
+                            `
+                        )
+                        .get(
+                            result.lastInsertRowid
+                        );
+
+                io.to(
+                    "chat_" + chatId
+                ).emit(
+                    "message",
+                    message
+                );
+
+            } catch (error) {
+
+                console.error(
+                    "SEND MESSAGE ERROR:",
+                    error
+                );
+            }
+        }
+    );
+
+
+    socket.on(
+        "disconnect",
+        () => {
+
+            console.log(
+                "Socket disconnected:",
+                socket.user.username
+            );
+        }
+    );
+});
+
+// ============================================================
+// ERROR HANDLER
+// ============================================================
+
+app.use(
+    (err, req, res, next) => {
+
+        console.error(
+            "EXPRESS ERROR:",
+            err
+        );
+
+        if (res.headersSent) {
+            return next(err);
+        }
+
+        res.status(500).json({
+            error: "Внутренняя ошибка сервера.",
+        });
+    }
+);
+
+// ============================================================
+// START
+// ============================================================
+
+server.listen(
+    PORT,
+    "0.0.0.0",
+    () => {
+
+        console.log(
+            "================================"
+        );
+
+        console.log(
+            "M-Talk running on port " +
+            PORT
+        );
+
+        console.log(
+            "M-Talk is ready!"
+        );
+
+        console.log(
+            "================================"
+        );
+    }
+);
+
+// ============================================================
+// GRACEFUL SHUTDOWN
+// ============================================================
+
+function shutdown(signal) {
+
+    console.log(
+        signal +
+        " received. Shutting down..."
+    );
+
+    server.close(() => {
+
+        try {
+            db.close();
+        } catch (e) {}
+
+        process.exit(0);
+    });
+}
+
+process.on(
+    "SIGTERM",
+    () => shutdown("SIGTERM")
+);
+
+process.on(
+    "SIGINT",
+    () => shutdown("SIGINT")
 );
