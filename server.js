@@ -6,7 +6,7 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const { Pool } = require("pg");
 const { Server } = require("socket.io");
-
+const { firebase } = require("./firebase");
 const app = express();
 
 app.set("trust proxy", 1);
