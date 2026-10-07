@@ -1,9 +1,14 @@
-const admin = require("firebase-admin");
+const { initializeApp, cert } = require("firebase-admin/app");
+const { getMessaging } = require("firebase-admin/messaging");
 
-let initialized = false;
+let firebaseApp = null;
 
 function initFirebase() {
-  if (initialized) return admin;
+  if (firebaseApp) {
+    return {
+      messaging: () => getMessaging(firebaseApp)
+    };
+  }
 
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
 
@@ -17,15 +22,15 @@ function initFirebase() {
   try {
     const serviceAccount = JSON.parse(raw);
 
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
+    firebaseApp = initializeApp({
+      credential: cert(serviceAccount)
     });
-
-    initialized = true;
 
     console.log("Firebase Admin успешно запущен.");
 
-    return admin;
+    return {
+      messaging: () => getMessaging(firebaseApp)
+    };
   } catch (error) {
     console.error(
       "Ошибка Firebase Admin:",
