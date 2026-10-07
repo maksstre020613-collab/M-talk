@@ -473,7 +473,40 @@ app.post(
     }
   }
 );
+app.post("/api/push-token", auth, async (req, res) => {
+  const token = String(req.body.token || "").trim();
 
+  if (!token || token.length > 4096) {
+    return res.status(400).json({
+      error: "Неверный FCM токен"
+    });
+  }
+
+  try {
+    await pool.query(
+      `
+      INSERT INTO push_tokens
+        (user_id, token, updated_at)
+      VALUES
+        ($1, $2, NOW())
+      ON CONFLICT (token)
+      DO UPDATE SET
+        user_id = EXCLUDED.user_id,
+        updated_at = NOW()
+      `,
+      [req.user.sub, token]
+    );
+
+    res.json({ ok: true });
+
+  } catch (error) {
+    console.error("FCM token save error:", error);
+
+    res.status(500).json({
+      error: "Не удалось сохранить токен"
+    });
+  }
+});
 /* =========================
    LOGIN
 ========================= */
