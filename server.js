@@ -7,6 +7,7 @@ const rateLimit = require("express-rate-limit");
 const { Pool } = require("pg");
 const { Server } = require("socket.io");
 const { firebase } = require("./firebase");
+
 const app = express();
 
 app.set("trust proxy", 1);
@@ -39,46 +40,14 @@ app.use(
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-
-        scriptSrc: [
-          "'self'",
-          "'unsafe-inline'"
-        ],
-
-        styleSrc: [
-          "'self'",
-          "'unsafe-inline'"
-        ],
-
-        connectSrc: [
-          "'self'",
-          "ws:",
-          "wss:"
-        ],
-
-        imgSrc: [
-          "'self'",
-          "data:",
-          "blob:"
-        ],
-
-        mediaSrc: [
-          "'self'",
-          "data:",
-          "blob:"
-        ],
-
-        objectSrc: [
-          "'none'"
-        ],
-
-        baseUri: [
-          "'self'"
-        ],
-
-        frameAncestors: [
-          "'none'"
-        ]
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        connectSrc: ["'self'", "ws:", "wss:"],
+        imgSrc: ["'self'", "data:", "blob:"],
+        mediaSrc: ["'self'", "data:", "blob:"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        frameAncestors: ["'none'"]
       }
     }
   })
@@ -90,9 +59,7 @@ app.use(
   })
 );
 
-app.use(
-  express.static("public")
-);
+app.use(express.static("public"));
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -199,20 +166,36 @@ async function initDB() {
     ON chat_members(user_id)
   `);
 
+  /* =========================
+     FCM TOKENS
+  ========================= */
+
+  await db(`
+    CREATE TABLE IF NOT EXISTS push_tokens (
+      id BIGSERIAL PRIMARY KEY,
+
+      user_id BIGINT NOT NULL
+        REFERENCES users(id)
+        ON DELETE CASCADE,
+
+      token TEXT NOT NULL UNIQUE,
+
+      created_at TIMESTAMPTZ
+        NOT NULL DEFAULT NOW(),
+
+      updated_at TIMESTAMPTZ
+        NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await db(`
+    CREATE INDEX IF NOT EXISTS idx_push_tokens_user
+    ON push_tokens(user_id)
+  `);
+
   console.log("PostgreSQL database ready");
 }
-await pool.query(`
-  CREATE TABLE IF NOT EXISTS push_tokens (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token TEXT NOT NULL UNIQUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  );
 
-  CREATE INDEX IF NOT EXISTS idx_push_tokens_user
-    ON push_tokens(user_id);
-`);
 /* =========================
    HELPERS
 ========================= */
@@ -305,12 +288,108 @@ async function isMember(chatId, userId) {
 }
 
 /* =========================
+   FCM
+========================= */
+
+async function sendPushToUser(
+  userId,
+  title,
+  body,
+  chatId
+) {
+  const admin = firebase();
+
+  if (!admin) {
+    return;
+  }
+
+  try {
+    const result = await db(
+      `
+      SELECT token
+      FROM push_tokens
+      WHERE user_id=$1
+      `,
+      [userId]
+    );
+
+    const tokens =
+      result.rows.map(
+        row => row.token
+      );
+
+    if (!tokens.length) {
+      return;
+    }
+
+    const response =
+      await admin.messaging()
+        .sendEachForMulticast({
+          tokens,
+
+          data: {
+            title: String(title),
+            body: String(body),
+            chatId: String(chatId)
+          },
+
+          android: {
+            priority: "high"
+          }
+        });
+
+    const invalidTokens = [];
+
+    response.responses.forEach(
+      (item, index) => {
+        if (!item.success) {
+          const code =
+            item.error?.code || "";
+
+          if (
+            code.includes(
+              "registration-token-not-registered"
+            ) ||
+            code.includes(
+              "invalid-registration-token"
+            )
+          ) {
+            invalidTokens.push(
+              tokens[index]
+            );
+          }
+        }
+      }
+    );
+
+    if (invalidTokens.length) {
+      await db(
+        `
+        DELETE FROM push_tokens
+        WHERE token = ANY($1::text[])
+        `,
+        [invalidTokens]
+      );
+    }
+
+  } catch (error) {
+    console.error(
+      "FCM send error:",
+      error
+    );
+  }
+}
+
+/* =========================
    ONLINE
 ========================= */
 
 const online = new Map();
 
-function setOnline(userId, socketId) {
+function setOnline(
+  userId,
+  socketId
+) {
   if (!online.has(userId)) {
     online.set(
       userId,
@@ -322,10 +401,13 @@ function setOnline(userId, socketId) {
     .get(userId)
     .add(socketId);
 
-  io.emit("userStatus", {
-    userId,
-    online: true
-  });
+  io.emit(
+    "userStatus",
+    {
+      userId,
+      online: true
+    }
+  );
 }
 
 async function setOffline(
@@ -356,11 +438,14 @@ async function setOffline(
       [userId]
     );
 
-    io.emit("userStatus", {
-      userId,
-      online: false,
-      lastSeen: now
-    });
+    io.emit(
+      "userStatus",
+      {
+        userId,
+        online: false,
+        lastSeen: now
+      }
+    );
   }
 }
 
@@ -473,40 +558,126 @@ app.post(
     }
   }
 );
-app.post("/api/push-token", auth, async (req, res) => {
-  const token = String(req.body.token || "").trim();
 
-  if (!token || token.length > 4096) {
-    return res.status(400).json({
-      error: "Неверный FCM токен"
-    });
+/* =========================
+   PUSH TOKEN
+========================= */
+
+app.post(
+  "/api/push-token",
+  auth,
+  async (req, res) => {
+    const token =
+      String(
+        req.body.token || ""
+      ).trim();
+
+    if (
+      !token ||
+      token.length > 4096
+    ) {
+      return res.status(400).json({
+        error:
+          "Неверный FCM токен"
+      });
+    }
+
+    try {
+      await db(
+        `
+        INSERT INTO push_tokens(
+          user_id,
+          token,
+          updated_at
+        )
+        VALUES(
+          $1,
+          $2,
+          NOW()
+        )
+
+        ON CONFLICT (token)
+
+        DO UPDATE SET
+          user_id=EXCLUDED.user_id,
+          updated_at=NOW()
+        `,
+        [
+          req.user.id,
+          token
+        ]
+      );
+
+      return res.json({
+        ok: true
+      });
+
+    } catch (error) {
+      console.error(
+        "FCM token save error:",
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          "Не удалось сохранить токен"
+      });
+    }
   }
+);
 
-  try {
-    await pool.query(
-      `
-      INSERT INTO push_tokens
-        (user_id, token, updated_at)
-      VALUES
-        ($1, $2, NOW())
-      ON CONFLICT (token)
-      DO UPDATE SET
-        user_id = EXCLUDED.user_id,
-        updated_at = NOW()
-      `,
-      [req.user.sub, token]
-    );
+/* =========================
+   DELETE PUSH TOKEN
+========================= */
 
-    res.json({ ok: true });
+app.delete(
+  "/api/push-token",
+  auth,
+  async (req, res) => {
+    const token =
+      String(
+        req.body.token || ""
+      ).trim();
 
-  } catch (error) {
-    console.error("FCM token save error:", error);
+    if (!token) {
+      return res.status(400).json({
+        error:
+          "Токен не указан"
+      });
+    }
 
-    res.status(500).json({
-      error: "Не удалось сохранить токен"
-    });
+    try {
+      await db(
+        `
+        DELETE FROM push_tokens
+
+        WHERE user_id=$1
+          AND token=$2
+        `,
+        [
+          req.user.id,
+          token
+        ]
+      );
+
+      return res.json({
+        ok: true
+      });
+
+    } catch (error) {
+      console.error(
+        "FCM token delete error:",
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          "Не удалось удалить токен"
+      });
+    }
   }
-});
+);
+
 /* =========================
    LOGIN
 ========================= */
@@ -534,7 +705,9 @@ app.post(
             display_name,
             password_hash,
             last_seen
+
           FROM users
+
           WHERE LOWER(username)
             = LOWER($1)
           `,
@@ -571,7 +744,8 @@ app.post(
         token:
           makeToken(user),
 
-        user: safeUser
+        user:
+          safeUser
       });
 
     } catch (e) {
@@ -600,13 +774,17 @@ app.get(
           SELECT
             id,
             username,
+
             COALESCE(
               display_name,
               username
             ) AS display_name,
+
             created_at,
             last_seen
+
           FROM users
+
           WHERE id=$1
           `,
           [req.user.id]
@@ -665,7 +843,9 @@ app.patch(
         await db(
           `
           UPDATE users
+
           SET display_name=$1
+
           WHERE id=$2
 
           RETURNING
@@ -704,8 +884,6 @@ app.patch(
 
 /* =========================
    SEARCH USERS
-   /api/users
-   /api/users/search
 ========================= */
 
 app.get(
@@ -762,12 +940,14 @@ app.get(
         );
 
       return res.json(
-        r.rows.map(user => ({
-          ...makeUser(user),
+        r.rows.map(
+          user => ({
+            ...makeUser(user),
 
-          online:
-            online.has(user.id)
-        }))
+            online:
+              online.has(user.id)
+          })
+        )
       );
 
     } catch (e) {
@@ -1550,12 +1730,62 @@ io.on(
             }
           }
 
+          /* =========================
+             SEND TO CHAT
+          ========================= */
+
           io.to(
             "chat:" + chatId
           ).emit(
             "newMessage",
             msg
           );
+
+          /* =========================
+             FIND OTHER USERS
+          ========================= */
+
+          const members =
+            await db(
+              `
+              SELECT
+                user_id
+
+              FROM chat_members
+
+              WHERE chat_id=$1
+                AND user_id<>$2
+              `,
+              [
+                chatId,
+                userId
+              ]
+            );
+
+          /* =========================
+             SEND FCM
+          ========================= */
+
+          for (
+            const member
+            of members.rows
+          ) {
+            await sendPushToUser(
+              member.user_id,
+
+              msg.sender_display_name ||
+                msg.sender_username ||
+                "Новое сообщение",
+
+              msg.text,
+
+              chatId
+            );
+          }
+
+          /* =========================
+             ACK
+          ========================= */
 
           callback?.({
             ok: true,
@@ -1599,8 +1829,7 @@ app.get(
   (req, res) => {
     res.json({
       ok: true,
-      service:
-        "M-Talk"
+      service: "M-Talk"
     });
   }
 );
